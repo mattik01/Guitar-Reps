@@ -1,0 +1,56 @@
+- generic [ref=e3]:
+  - navigation [ref=e4]:
+    - link "Home" [ref=e5] [cursor=pointer]:
+      - /url: /
+    - link "Repertoire" [ref=e6] [cursor=pointer]:
+      - /url: /repertoire
+    - link "Progress" [ref=e7] [cursor=pointer]:
+      - /url: /progress
+  - main [ref=e8]:
+    - generic [ref=e9]:
+      - heading "Guitar Reps" [level=1] [ref=e10]
+      - paragraph [ref=e11]: Pick a routine — stack as many as you want today.
+      - generic [ref=e12]:
+        - link "🎸 Chord Learn a new one or drill an existing chord" [ref=e13] [cursor=pointer]:
+          - /url: /routine/chord
+          - generic [ref=e14]: 🎸
+          - heading "Chord" [level=2] [ref=e15]
+          - generic [ref=e16]: Learn a new one or drill an existing chord
+        - link "🔁 Chord swap 1-minute drill between two chords" [ref=e17] [cursor=pointer]:
+          - /url: /routine/swap
+          - generic [ref=e18]: 🔁
+          - heading "Chord swap" [level=2] [ref=e19]
+          - generic [ref=e20]: 1-minute drill between two chords
+        - link "🎶 Strumming Metronome + progression practice" [ref=e21] [cursor=pointer]:
+          - /url: /routine/strum
+          - generic [ref=e22]: 🎶
+          - heading "Strumming" [level=2] [ref=e23]
+          - generic [ref=e24]: Metronome + progression practice
+      - generic [ref=e25]:
+        - generic [ref=e26]:
+          - heading "This week" [level=3] [ref=e27]
+          - link "Full progress" [ref=e28] [cursor=pointer]:
+            - /url: /progress
+        - generic [ref=e29]:
+          - generic [ref=e30]:
+            - generic [ref=e31]: Sa
+            - generic [ref=e32]: "18"
+          - generic [ref=e33]:
+            - generic [ref=e34]: So
+            - generic [ref=e35]: "19"
+          - generic [ref=e36]:
+            - generic [ref=e37]: Mo
+            - generic [ref=e38]: "20"
+          - generic [ref=e39]:
+            - generic [ref=e40]: Di
+            - generic [ref=e41]: "21"
+          - generic [ref=e42]:
+            - generic [ref=e43]: Mi
+            - generic [ref=e44]: "22"
+          - generic [ref=e45]:
+            - generic [ref=e46]: Do
+            - generic [ref=e47]: "23"
+          - generic [ref=e48]:
+            - generic [ref=e49]: Fr
+            - generic [ref=e50]: "24"
+      - generic [ref=e52]: 2 chords in repertoire · 0 routines today

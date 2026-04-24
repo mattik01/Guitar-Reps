@@ -1,0 +1,180 @@
+- generic [ref=e3]:
+  - navigation [ref=e4]:
+    - link "Home" [ref=e5] [cursor=pointer]:
+      - /url: /
+    - link "Repertoire" [ref=e6] [cursor=pointer]:
+      - /url: /repertoire
+    - link "Session" [ref=e7] [cursor=pointer]:
+      - /url: /session
+    - link "Stats" [ref=e8] [cursor=pointer]:
+      - /url: /stats
+  - main [ref=e9]:
+    - generic [ref=e10]:
+      - generic [ref=e11]:
+        - heading "Repertoire" [level=1] [ref=e12]
+        - button "+ Add chord" [active] [ref=e13] [cursor=pointer]
+      - paragraph [ref=e15]:
+        - text: No chords yet. Click
+        - strong [ref=e16]: Add chord
+        - text: to pick your first one, or just
+        - link "start a session" [ref=e17] [cursor=pointer]:
+          - /url: /session
+        - text: — you'll be guided through learning one.
+      - generic [ref=e19]:
+        - generic [ref=e20]:
+          - heading "Pick a chord to learn" [level=2] [ref=e21]
+          - button "Close" [ref=e22] [cursor=pointer]
+        - generic [ref=e23]:
+          - generic [ref=e24] [cursor=pointer]:
+            - generic [ref=e25]: Em
+            - img "chord diagram" [ref=e26]:
+              - generic [ref=e33]: "2"
+              - generic [ref=e36]: "3"
+            - generic [ref=e37]: Difficulty 1/5
+          - generic [ref=e38] [cursor=pointer]:
+            - generic [ref=e39]: E
+            - img "chord diagram" [ref=e40]:
+              - generic [ref=e46]: "2"
+              - generic [ref=e49]: "3"
+              - generic [ref=e52]: "1"
+            - generic [ref=e53]: Difficulty 1/5
+          - generic [ref=e54] [cursor=pointer]:
+            - generic [ref=e55]: Am
+            - img "chord diagram" [ref=e56]:
+              - generic [ref=e57]: ✕
+              - generic [ref=e62]: "2"
+              - generic [ref=e65]: "3"
+              - generic [ref=e68]: "1"
+            - generic [ref=e69]: Difficulty 1/5
+          - generic [ref=e70] [cursor=pointer]:
+            - generic [ref=e71]: A
+            - img "chord diagram" [ref=e72]:
+              - generic [ref=e73]: ✕
+              - generic [ref=e78]: "1"
+              - generic [ref=e81]: "2"
+              - generic [ref=e84]: "3"
+            - generic [ref=e85]: Difficulty 1/5
+          - generic [ref=e86] [cursor=pointer]:
+            - generic [ref=e87]: D
+            - img "chord diagram" [ref=e88]:
+              - generic [ref=e89]: ✕
+              - generic [ref=e90]: ✕
+              - generic [ref=e94]: "1"
+              - generic [ref=e97]: "3"
+              - generic [ref=e100]: "2"
+            - generic [ref=e101]: Difficulty 1/5
+          - generic [ref=e102] [cursor=pointer]:
+            - generic [ref=e103]: A7
+            - img "chord diagram" [ref=e104]:
+              - generic [ref=e105]: ✕
+              - generic [ref=e111]: "1"
+              - generic [ref=e114]: "2"
+            - generic [ref=e115]: Difficulty 1/5
+          - generic [ref=e116] [cursor=pointer]:
+            - generic [ref=e117]: E7
+            - img "chord diagram" [ref=e118]:
+              - generic [ref=e125]: "2"
+              - generic [ref=e128]: "1"
+            - generic [ref=e129]: Difficulty 1/5
+          - generic [ref=e130] [cursor=pointer]:
+            - generic [ref=e131]: Cmaj7
+            - img "chord diagram" [ref=e132]:
+              - generic [ref=e133]: ✕
+              - generic [ref=e139]: "3"
+              - generic [ref=e142]: "2"
+            - generic [ref=e143]: Difficulty 1/5
+          - generic [ref=e144] [cursor=pointer]:
+            - generic [ref=e145]: Am7
+            - img "chord diagram" [ref=e146]:
+              - generic [ref=e147]: ✕
+              - generic [ref=e153]: "2"
+              - generic [ref=e156]: "1"
+            - generic [ref=e157]: Difficulty 1/5
+          - generic [ref=e158] [cursor=pointer]:
+            - generic [ref=e159]: Em7
+            - img "chord diagram" [ref=e160]:
+              - generic [ref=e168]: "2"
+            - generic [ref=e169]: Difficulty 1/5
+          - generic [ref=e170] [cursor=pointer]:
+            - generic [ref=e171]: Dm
+            - img "chord diagram" [ref=e172]:
+              - generic [ref=e173]: ✕
+              - generic [ref=e174]: ✕
+              - generic [ref=e178]: "2"
+              - generic [ref=e181]: "3"
+              - generic [ref=e184]: "1"
+            - generic [ref=e185]: Difficulty 2/5
+          - generic [ref=e186] [cursor=pointer]:
+            - generic [ref=e187]: C
+            - img "chord diagram" [ref=e188]:
+              - generic [ref=e189]: ✕
+              - generic [ref=e194]: "3"
+              - generic [ref=e197]: "2"
+              - generic [ref=e200]: "1"
+            - generic [ref=e201]: Difficulty 2/5
+          - generic [ref=e202] [cursor=pointer]:
+            - generic [ref=e203]: G
+            - img "chord diagram" [ref=e204]:
+              - generic [ref=e210]: "2"
+              - generic [ref=e213]: "1"
+              - generic [ref=e216]: "3"
+            - generic [ref=e217]: Difficulty 2/5
+          - generic [ref=e218] [cursor=pointer]:
+            - generic [ref=e219]: D7
+            - img "chord diagram" [ref=e220]:
+              - generic [ref=e221]: ✕
+              - generic [ref=e222]: ✕
+              - generic [ref=e226]: "2"
+              - generic [ref=e229]: "1"
+              - generic [ref=e232]: "3"
+            - generic [ref=e233]: Difficulty 2/5
+          - generic [ref=e234] [cursor=pointer]:
+            - generic [ref=e235]: G7
+            - img "chord diagram" [ref=e236]:
+              - generic [ref=e242]: "3"
+              - generic [ref=e245]: "2"
+              - generic [ref=e248]: "1"
+            - generic [ref=e249]: Difficulty 2/5
+          - generic [ref=e250] [cursor=pointer]:
+            - generic [ref=e251]: Dm7
+            - img "chord diagram" [ref=e252]:
+              - generic [ref=e253]: ✕
+              - generic [ref=e254]: ✕
+              - generic [ref=e257]: "1"
+              - generic [ref=e260]: "2"
+            - generic [ref=e261]: Difficulty 2/5
+          - generic [ref=e262] [cursor=pointer]:
+            - generic [ref=e263]: F (mini)
+            - img "chord diagram" [ref=e264]:
+              - generic [ref=e265]: ✕
+              - generic [ref=e266]: ✕
+              - generic [ref=e268]: "1"
+              - generic [ref=e271]: "3"
+              - generic [ref=e274]: "2"
+            - generic [ref=e275]: Difficulty 3/5
+          - generic [ref=e276] [cursor=pointer]:
+            - generic [ref=e277]: B7
+            - img "chord diagram" [ref=e278]:
+              - generic [ref=e279]: ✕
+              - generic [ref=e283]: "2"
+              - generic [ref=e286]: "1"
+              - generic [ref=e289]: "3"
+              - generic [ref=e292]: "4"
+            - generic [ref=e293]: Difficulty 3/5
+          - generic [ref=e294] [cursor=pointer]:
+            - generic [ref=e295]: Bm
+            - img "chord diagram" [ref=e296]:
+              - generic [ref=e297]: ✕
+              - generic [ref=e299]: "1"
+              - generic [ref=e302]: "3"
+              - generic [ref=e305]: "4"
+              - generic [ref=e308]: "2"
+            - generic [ref=e309]: Difficulty 4/5
+          - generic [ref=e310] [cursor=pointer]:
+            - generic [ref=e311]: F (barre)
+            - img "chord diagram" [ref=e312]:
+              - generic [ref=e314]: "1"
+              - generic [ref=e317]: "3"
+              - generic [ref=e320]: "4"
+              - generic [ref=e323]: "2"
+            - generic [ref=e324]: Difficulty 5/5

@@ -1,0 +1,25 @@
+- generic [ref=e3]:
+  - navigation [ref=e4]:
+    - link "Home" [ref=e5] [cursor=pointer]:
+      - /url: /
+    - link "Repertoire" [ref=e6] [cursor=pointer]:
+      - /url: /repertoire
+    - link "Session" [ref=e7] [cursor=pointer]:
+      - /url: /session
+    - link "Stats" [ref=e8] [cursor=pointer]:
+      - /url: /stats
+  - main [ref=e9]:
+    - generic [ref=e34]:
+      - generic [ref=e35]:
+        - generic [ref=e36]:
+          - generic [ref=e37]: Step 1 / 6
+          - heading "Learn a new chord" [level=1] [ref=e38]
+        - button "End session" [ref=e39] [cursor=pointer]
+      - generic [ref=e40]:
+        - generic [ref=e41]: "Step: learn a new chord"
+        - heading "Em — added to your repertoire" [level=2] [ref=e346]
+        - paragraph [ref=e347]: Take a minute to look at the diagram, place your fingers, and strum it a few times.
+        - img "chord diagram" [ref=e349]:
+          - generic [ref=e356]: "2"
+          - generic [ref=e359]: "3"
+        - button "Got it — ready to drill" [ref=e361] [cursor=pointer]

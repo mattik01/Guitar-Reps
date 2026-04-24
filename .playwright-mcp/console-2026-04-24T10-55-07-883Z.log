@@ -1,0 +1,27 @@
+[      56ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/chunk-XPR23Y44.js?v=e3457ef7:21548
+[      72ms] [WARNING] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=b927cc55:4433
+[      72ms] [WARNING] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=b927cc55:4433
+[   84367ms] [ERROR] SyntaxError: The requested module '/src/state/store.ts?t=1777028192223' does not provide an export named 'useSessionLog' @ http://localhost:5173/@vite/client:173
+[   84367ms] [ERROR] [hmr] Failed to reload /src/session/SessionStepper.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5173/@vite/client:175
+[   84367ms] [ERROR] SyntaxError: The requested module '/src/state/store.ts?t=1777028192223' does not provide an export named 'useSessionLog' @ http://localhost:5173/@vite/client:173
+[   84367ms] [ERROR] [hmr] Failed to reload /src/routes/Session.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5173/@vite/client:175
+[   84367ms] [ERROR] SyntaxError: The requested module '/src/state/store.ts?t=1777028192223' does not provide an export named 'useSessionLog' @ http://localhost:5173/@vite/client:173
+[   84367ms] [ERROR] [hmr] Failed to reload /src/routes/Stats.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5173/@vite/client:175
+[   84367ms] [ERROR] SyntaxError: The requested module '/src/state/store.ts?t=1777028192223' does not provide an export named 'useSessionLog' @ http://localhost:5173/@vite/client:173
+[   84368ms] [ERROR] [hmr] Failed to reload /src/routes/Home.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5173/@vite/client:175
+[  305375ms] [WARNING] No routes matched location "/session"  @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=b927cc55:211
+[  305375ms] [WARNING] No routes matched location "/session"  @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=b927cc55:211
+[  313547ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/src/routes/Session.tsx?t=1777028421421:0
+[  313548ms] [ERROR] [hmr] Failed to reload /src/routes/Session.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5173/@vite/client:175
+[  313548ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/src/routes/Stats.tsx?t=1777028421422:0
+[  313548ms] [ERROR] [hmr] Failed to reload /src/routes/Stats.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5173/@vite/client:175
+[  313548ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/src/session/LearnNewChordStep.tsx?t=1777028421422:0
+[  313549ms] [ERROR] [hmr] Failed to reload /src/session/LearnNewChordStep.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5173/@vite/client:175
+[  313550ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/src/session/PerfectionStep.tsx?t=1777028421422:0
+[  313550ms] [ERROR] [hmr] Failed to reload /src/session/PerfectionStep.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5173/@vite/client:175
+[  313550ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/src/session/SessionStepper.tsx?t=1777028421422:0
+[  313551ms] [ERROR] [hmr] Failed to reload /src/session/SessionStepper.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5173/@vite/client:175
+[  313551ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/src/session/SwapStep.tsx?t=1777028421423:0
+[  313552ms] [ERROR] [hmr] Failed to reload /src/session/SwapStep.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5173/@vite/client:175
+[  313552ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/src/session/StrummingStep.tsx?t=1777028421422:0
+[  313553ms] [ERROR] [hmr] Failed to reload /src/session/StrummingStep.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5173/@vite/client:175

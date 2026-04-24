@@ -1,0 +1,22 @@
+- generic [ref=e3]:
+  - navigation [ref=e4]:
+    - link "Home" [ref=e5] [cursor=pointer]:
+      - /url: /
+    - link "Repertoire" [ref=e6] [cursor=pointer]:
+      - /url: /repertoire
+    - link "Session" [ref=e7] [cursor=pointer]:
+      - /url: /session
+    - link "Stats" [ref=e8] [cursor=pointer]:
+      - /url: /stats
+  - main [ref=e9]:
+    - generic [ref=e10]:
+      - generic [ref=e11]:
+        - heading "Repertoire" [level=1] [ref=e12]
+        - button "+ Add chord" [ref=e13] [cursor=pointer]
+      - paragraph [ref=e15]:
+        - text: No chords yet. Click
+        - strong [ref=e16]: Add chord
+        - text: to pick your first one, or just
+        - link "start a session" [ref=e17] [cursor=pointer]:
+          - /url: /session
+        - text: — you'll be guided through learning one.
