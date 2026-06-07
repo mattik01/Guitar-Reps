@@ -4,3 +4,6 @@ dist-ssr
 *.local
 .vite
 .DS_Store
+
+# Playwright MCP debug artifacts
+.playwright-mcp/
