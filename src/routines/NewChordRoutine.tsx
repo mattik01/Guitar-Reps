@@ -2,11 +2,13 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ChordDiagram } from '../components/ChordDiagram';
 import { ChordEditor } from '../components/ChordEditor';
+import { LibraryChordGrid } from '../components/LibraryChordGrid';
 import { CHORD_LIBRARY } from '../data/chordLibrary';
-import { useRepertoire, type Chord, type ChordShape } from '../state/store';
+import { useFingeringChoice, useRepertoire, type Chord, type ChordShape } from '../state/store';
 
 export default function NewChordRoutine() {
   const [repertoire, setRepertoire] = useRepertoire();
+  const [fingeringChoice] = useFingeringChoice();
   const [justAdded, setJustAdded] = useState<Chord | null>(null);
   const [customOpen, setCustomOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -21,7 +23,12 @@ export default function NewChordRoutine() {
   function addFromLibrary(id: string) {
     const lib = CHORD_LIBRARY.find(c => c.id === id);
     if (!lib) return;
-    const chord: Chord = { ...lib, learnedAt: Date.now(), perfectReps: 0 };
+    const idx = Math.min(Math.max(fingeringChoice[id] ?? 0, 0), lib.fingerings.length - 1);
+    const chord: Chord = {
+      id: lib.id, name: lib.name, shape: lib.fingerings[idx].shape,
+      category: lib.category, difficulty: lib.difficulty, importance: lib.importance,
+      info: lib.info, learnedAt: Date.now(), perfectReps: 0,
+    };
     setRepertoire(prev => [...prev, chord]);
     setJustAdded(chord);
     setCustomOpen(false);
@@ -124,15 +131,7 @@ export default function NewChordRoutine() {
       {available.length === 0 ? (
         <p className="muted">You've added every chord in the library. Add a custom one to expand.</p>
       ) : (
-        <div className="grid">
-          {available.map(lib => (
-            <div key={lib.id} className="chord-card" onClick={() => addFromLibrary(lib.id)}>
-              <div className="name">{lib.name}</div>
-              <ChordDiagram shape={lib.shape} size={120} />
-              <div className="meta">Difficulty {lib.difficulty ?? 1}/5</div>
-            </div>
-          ))}
-        </div>
+        <LibraryChordGrid chords={available} onPick={addFromLibrary} />
       )}
     </div>
   );

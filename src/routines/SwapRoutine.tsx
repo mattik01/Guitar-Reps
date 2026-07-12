@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ChordDiagram } from '../components/ChordDiagram';
+import { CleanlinessBadge } from '../components/CleanlinessBadge';
+import { MicMeter } from '../components/MicMeter';
 import { Timer, type TimerHandle } from '../components/Timer';
-import { pairKey, useRepertoire, useRoutineLog, useSwapRecords, type Chord, type SwapRecord } from '../state/store';
+import { useChordListener } from '../audio/useChordListener';
+import type { StrumEvent } from '../audio/chordListener';
+import { calSampleWeight, typicalSimilarity, type Cleanliness } from '../audio/chroma';
+import { pairKey, recordCalibrationSample, useMicCalibration, useMicSettings, useRepertoire, useRoutineLog, useSwapRecords, type Chord, type SwapRecord } from '../state/store';
 
 type Phase = 'picking' | 'ready' | 'running' | 'entering' | 'finished';
 
@@ -15,7 +20,9 @@ export default function SwapRoutine() {
 
   const [pair, setPair] = useState<[Chord, Chord] | null>(null);
   const [phase, setPhase] = useState<Phase>('picking');
-  const [seconds, setSeconds] = useState(60);
+  // Fixed 60s window so a logged count is directly "swaps per minute" — the unit the
+  // per-song transition colouring compares against (½ the song's BPM). Not adjustable.
+  const seconds = 60;
   const [entered, setEntered] = useState('');
   const [savedCount, setSavedCount] = useState<number | null>(null);
   const [priorBest, setPriorBest] = useState<number | null>(null);
@@ -25,10 +32,76 @@ export default function SwapRoutine() {
   const beepCtxRef = useRef<AudioContext | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // --- microphone auto-count ---
+  const [micSettings, setMicSettings] = useMicSettings();
+  const [calibration] = useMicCalibration();
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+  const detectedSwapsRef = useRef(0);
+  const strumsHeardRef = useRef(0);
+  // Last chord the classifier was CONFIDENT about; null right after an unsure
+  // strum (we assumed alternation, so the current chord is unknown).
+  const lastConfidentChordRef = useRef<string | null>(null);
+  const [liveSwaps, setLiveSwaps] = useState(0);
+  const [hearing, setHearing] = useState<string | null>(null);
+  const [lastClean, setLastClean] = useState<Cleanliness | null>(null);
+  const [micCounted, setMicCounted] = useState<number | null>(null);
+
   const key = pair ? pairKey(pair[0].id, pair[1].id) : null;
   const record = key ? swaps[key] : null;
 
   const notEnough = repertoire.length < 2;
+
+  // Calibrated typical similarities normalize the A-vs-B comparison: without
+  // them, a chord with a flatter template (e.g. a 7th) is structurally
+  // outscored by a peakier one even when played equally well.
+  const micTargets = useMemo(
+    () => (pair
+      ? pair.map(c => ({
+          id: c.id,
+          shape: c.shape,
+          typicalSim: typicalSimilarity(calibration[c.id]?.sims ?? []) ?? undefined,
+        }))
+      : []),
+    [pair, calibration]
+  );
+
+  // Armed from 'ready' so the permission prompt + level meter appear BEFORE the
+  // clock starts (the pick click provides the user gesture for resume()).
+  const micActive = micSettings.enabled && !!pair && (phase === 'ready' || phase === 'running');
+
+  // Counting rule: "flip counting with permissive fallback". Counting matters
+  // more than classification here — a muddy strum still counts. Classification
+  // is only trusted for the one thing it's good at: suppressing confidently
+  // IDENTICAL consecutive strums (double-strums of the same chord). Anything
+  // unsure is assumed to be the alternation the exercise asks for.
+  function handleStrum(e: StrumEvent) {
+    const name = e.best ? pair?.find(c => c.id === e.best)?.name ?? null : null;
+    setHearing(name);
+    setLastClean(e.cleanliness); // live feedback in ready AND running — never gates
+    if (phaseRef.current !== 'running') return;
+    // Calibration collection: only strums the classifier is CONFIDENT about —
+    // weaker ground truth than the quiz's user-confirmed samples, but the user
+    // switched calibration on, i.e. promised clean playing in a quiet room.
+    // Weighted by the strum's cleanliness; too-dirty strums are skipped
+    // entirely (calSampleWeight returns null).
+    if (micSettings.calibrate && e.best) {
+      const sim = e.matches.find(m => m.id === e.best)?.similarity;
+      const weight = calSampleWeight(e.cleanliness?.score);
+      if (sim != null && weight != null) recordCalibrationSample(e.best, sim, weight);
+    }
+    strumsHeardRef.current++;
+    if (strumsHeardRef.current === 1) {
+      lastConfidentChordRef.current = e.best; // first strum starts the count, isn't a swap
+      return;
+    }
+    if (e.best && lastConfidentChordRef.current === e.best) return; // confident repeat — not a swap
+    lastConfidentChordRef.current = e.best; // null when unsure: next confident strum counts
+    detectedSwapsRef.current++;
+    setLiveSwaps(detectedSwapsRef.current);
+  }
+
+  const mic = useChordListener({ enabled: micActive, targets: micTargets, onStrum: handleStrum });
 
   useEffect(() => {
     return () => {
@@ -65,6 +138,17 @@ export default function SwapRoutine() {
     setSavedCount(null);
     setPriorBest(null);
     setFlashing(false);
+    resetMicCount();
+    setMicCounted(null);
+  }
+
+  function resetMicCount() {
+    detectedSwapsRef.current = 0;
+    strumsHeardRef.current = 0;
+    lastConfidentChordRef.current = null;
+    setLiveSwaps(0);
+    setHearing(null);
+    setLastClean(null);
   }
 
   function start() {
@@ -73,6 +157,8 @@ export default function SwapRoutine() {
     setPhase('running');
     setEntered('');
     setSavedCount(null);
+    resetMicCount();
+    setMicCounted(null);
     setTimeout(() => timerRef.current?.start(), 0);
   }
 
@@ -81,6 +167,11 @@ export default function SwapRoutine() {
     playEndBeeps();
     if (flashTimeoutRef.current) window.clearTimeout(flashTimeoutRef.current);
     flashTimeoutRef.current = window.setTimeout(() => setFlashing(false), 1600);
+    // Prefill with the mic's count when it heard anything — still fully editable.
+    if (micSettings.enabled && strumsHeardRef.current > 0) {
+      setEntered(String(detectedSwapsRef.current));
+      setMicCounted(detectedSwapsRef.current);
+    }
     setPhase('entering');
   }
 
@@ -151,6 +242,13 @@ export default function SwapRoutine() {
     timerRef.current?.reset();
   }
 
+  function cancelAttempt() {
+    if (flashTimeoutRef.current) window.clearTimeout(flashTimeoutRef.current);
+    timerRef.current?.reset();
+    setPhase('ready');
+    resetRoundState();
+  }
+
   if (notEnough) {
     return (
       <div>
@@ -178,12 +276,16 @@ export default function SwapRoutine() {
         <div className="card">
           <div className="row">
             <button className="button primary big" onClick={pickRandom}>🎲 Random pair</button>
+            <span className="muted" style={{ fontWeight: 700 }}>60s per round</span>
             <label className="toggle">
-              Timer (s)
-              <input type="number" min={15} max={300} step={5} value={seconds}
-                onChange={e => setSeconds(Math.max(15, Math.min(300, parseInt(e.target.value || '60', 10))))}
-                style={{ width: 70 }}
-              />
+              <input type="checkbox" checked={micSettings.enabled}
+                onChange={e => setMicSettings(prev => ({ ...prev, enabled: e.target.checked }))} />
+              🎙 Count with microphone
+            </label>
+            <label className="toggle" title="Learn per-chord similarity levels from confidently-classified strums">
+              <input type="checkbox" checked={!!micSettings.calibrate} disabled={!micSettings.enabled}
+                onChange={e => setMicSettings(prev => ({ ...prev, calibrate: e.target.checked }))} />
+              🎯 Auto-calibrate
             </label>
           </div>
           <hr style={{ border: 0, borderTop: '1px solid var(--line)', margin: '16px 0' }} />
@@ -221,6 +323,23 @@ export default function SwapRoutine() {
 
       <Timer ref={timerRef} seconds={seconds} onComplete={onTimerComplete} />
 
+      {micActive && (
+        <>
+          <div className="row" style={{ justifyContent: 'center', marginTop: 8 }}>
+            <MicMeter getLevel={mic.getLevel} state={mic.state} error={mic.error} />
+            {phase === 'ready' && mic.state === 'listening' && (
+              <span className="muted">strum to test — counting starts with the timer</span>
+            )}
+            {phase === 'ready' && <CleanlinessBadge clean={lastClean} />}
+          </div>
+          {micSettings.calibrate && mic.state === 'listening' && (
+            <div className="muted" style={{ textAlign: 'center', marginTop: 4 }}>
+              🎯 Auto-calibration is on — play as cleanly as you can, in a quiet room.
+            </div>
+          )}
+        </>
+      )}
+
       {phase === 'ready' && (
         <div className="footer-bar">
           <button className="button primary huge" onClick={start}>Start {seconds}s</button>
@@ -228,15 +347,42 @@ export default function SwapRoutine() {
       )}
 
       {phase === 'running' && (
-        <div className="card" style={{ marginTop: 12, textAlign: 'center' }}>
-          <div style={{ fontSize: 20, fontWeight: 700 }}>Swap between the two chords — count in your head.</div>
-          <div className="muted" style={{ marginTop: 6 }}>Screen will flash when the minute is up.</div>
-        </div>
+        <>
+          {micActive && mic.state === 'listening' ? (
+            <div className="card" style={{ marginTop: 12, textAlign: 'center' }}>
+              <div className="muted">Swaps heard</div>
+              <div style={{ fontSize: 64, fontWeight: 800, lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>
+                {liveSwaps}
+              </div>
+              <div className="muted" style={{ marginTop: 6 }}>
+                {hearing ? <>Hearing: <strong>{hearing}</strong></> : 'Hearing: …'}
+                {lastClean && <> · <CleanlinessBadge clean={lastClean} showHint={false} /></>}
+              </div>
+            </div>
+          ) : (
+            <div className="card" style={{ marginTop: 12, textAlign: 'center' }}>
+              <div style={{ fontSize: 20, fontWeight: 700 }}>Swap between the two chords — count in your head.</div>
+              <div className="muted" style={{ marginTop: 6 }}>
+                {micSettings.enabled && (mic.state === 'denied' || mic.state === 'error')
+                  ? 'Mic unavailable — count in your head as usual. Screen will flash when the minute is up.'
+                  : 'Screen will flash when the minute is up.'}
+              </div>
+            </div>
+          )}
+          <div className="footer-bar">
+            <button className="button" onClick={cancelAttempt}>Cancel — don't record</button>
+          </div>
+        </>
       )}
 
       {phase === 'entering' && (
         <div className="card" style={{ marginTop: 12 }}>
           <h2 style={{ marginTop: 0, textAlign: 'center' }}>Time's up — how many did you count?</h2>
+          {micCounted != null && (
+            <p className="muted" style={{ textAlign: 'center', marginTop: 0 }}>
+              🎙 Mic counted <strong>{micCounted}</strong> — adjust if it's off.
+            </p>
+          )}
           <input
             ref={inputRef}
             className="big-number-input"
@@ -250,6 +396,8 @@ export default function SwapRoutine() {
             placeholder="0"
           />
           <div className="footer-bar">
+            <button className="button" onClick={cancelAttempt}>Discard — bad attempt</button>
+            <div className="spacer" />
             <button className="button primary huge" onClick={saveCount} disabled={entered === '' || !Number.isFinite(parseInt(entered, 10))}>
               Save
             </button>

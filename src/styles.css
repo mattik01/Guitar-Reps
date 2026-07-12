@@ -108,8 +108,11 @@ h3 { margin: 14px 0 6px; font-size: 16px; }
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
+}
+@media (max-width: 720px) {
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .chord-card {
@@ -120,12 +123,74 @@ h3 { margin: 14px 0 6px; font-size: 16px; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   cursor: pointer;
 }
 .chord-card:hover { border-color: var(--ink); }
 .chord-card .name { font-weight: 700; font-size: 16px; }
 .chord-card .meta { color: var(--muted); font-size: 12px; }
+
+/* Fingering swipe control */
+.fingering {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  user-select: none;
+  width: 100%;
+}
+.fingering-stage { width: 100%; }
+.fingering-stage svg { width: 100%; height: auto; display: block; }
+.fingering-controls {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 8px;
+}
+.fingering-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+.fingering-controls .arrow {
+  width: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.fingering-controls .arrow:hover { border-color: var(--ink); background: var(--bg); }
+.fingering-controls .arrow:active { transform: scaleX(0.85); }
+.fingering-controls .arrow.hidden { visibility: hidden; pointer-events: none; }
+.fingering-dots { display: flex; gap: 5px; align-items: center; justify-content: center; }
+.fingering-dots .d:disabled { cursor: default; }
+.fingering-dots .d {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--line);
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
+}
+.fingering-dots .d:hover { transform: scale(1.25); }
+.fingering-dots .d.on { background: var(--accent); }
+.fingering-label {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.25;
+}
 
 .modal-backdrop {
   position: fixed;
@@ -263,3 +328,73 @@ input[type="number"], select {
   outline: none;
   border-color: var(--accent);
 }
+
+/* ---- microphone detection (MicMeter, /mic-test, verdict banner) ---- */
+
+.mic-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.mic-meter-track {
+  width: 140px;
+  height: 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.mic-meter-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--good);
+  transition: width 60ms linear;
+}
+.mic-meter-status { font-size: 14px; }
+
+.chroma-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 120px;
+}
+.chroma-bar {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+}
+.chroma-bar-track {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.chroma-bar-fill {
+  width: 100%;
+  background: var(--accent);
+}
+.chroma-bar-label { font-size: 12px; color: var(--muted, #777); }
+
+.verdict-banner {
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-weight: 700;
+  border: 1px solid var(--line);
+  margin: 0 auto 8px;
+  max-width: 420px;
+}
+.verdict-banner.match { border-color: var(--good); color: var(--good); }
+.verdict-banner.nomatch { border-color: var(--warn); color: var(--warn); }
+
+@keyframes mic-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.mic-listening-hint { animation: mic-pulse 1.6s ease-in-out infinite; }

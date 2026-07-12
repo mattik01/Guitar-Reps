@@ -19,9 +19,9 @@ export function ChordDiagram({ shape, size = 120 }: Props) {
 
   return (
     <svg
-      viewBox={`0 0 ${W} ${H}`}
+      viewBox={`0 12 ${W} ${H - 18}`}
       width={size}
-      height={(size * H) / W}
+      height={(size * (H - 18)) / W}
       role="img"
       aria-label="chord diagram"
     >
@@ -46,8 +46,9 @@ export function ChordDiagram({ shape, size = 120 }: Props) {
       {shape.frets.map((f, i) => {
         if (f === 'x') {
           return (
-            <text key={`m${i}`} x={stringX(i)} y={22}
-              textAnchor="middle" fontSize={12} fontWeight={700}>✕</text>
+            <text key={`m${i}`} x={stringX(i)} y={20}
+              textAnchor="middle" dominantBaseline="central"
+              fontSize={11} fontWeight={700}>✕</text>
           );
         }
         if (f === 0) {
@@ -75,7 +76,7 @@ export function ChordDiagram({ shape, size = 120 }: Props) {
             fontSize={8} fontWeight={700}
             fill="#fff" textAnchor="middle"
           >
-            {shape.fingers[shape.barre.fromIndex] ?? 'T'}
+            {shape.barre.label ?? shape.fingers[shape.barre.fromIndex] ?? 'T'}
           </text>
         </>
       )}

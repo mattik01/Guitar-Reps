@@ -3,13 +3,15 @@ import { Link } from 'react-router-dom';
 import { ChordCard } from '../components/ChordCard';
 import { ChordDiagram } from '../components/ChordDiagram';
 import { ChordEditor } from '../components/ChordEditor';
+import { LibraryChordGrid } from '../components/LibraryChordGrid';
 import { CHORD_LIBRARY } from '../data/chordLibrary';
 import { Sparkline } from '../routines/SwapRoutine';
-import { useRepertoire, useSwapRecords, type Chord, type ChordShape, type SwapRecord } from '../state/store';
+import { useFingeringChoice, useRepertoire, useSwapRecords, type Chord, type ChordShape, type SwapRecord } from '../state/store';
 
 export default function Repertoire() {
   const [repertoire, setRepertoire] = useRepertoire();
   const [swaps] = useSwapRecords();
+  const [fingeringChoice] = useFingeringChoice();
   const [picking, setPicking] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -26,7 +28,12 @@ export default function Repertoire() {
   function addChord(id: string) {
     const lib = CHORD_LIBRARY.find(c => c.id === id);
     if (!lib) return;
-    const chord: Chord = { ...lib, learnedAt: Date.now(), perfectReps: 0 };
+    const idx = Math.min(Math.max(fingeringChoice[id] ?? 0, 0), lib.fingerings.length - 1);
+    const chord: Chord = {
+      id: lib.id, name: lib.name, shape: lib.fingerings[idx].shape,
+      category: lib.category, difficulty: lib.difficulty, importance: lib.importance,
+      info: lib.info, learnedAt: Date.now(), perfectReps: 0,
+    };
     setRepertoire(prev => [...prev, chord]);
     setPicking(false);
   }
@@ -123,15 +130,7 @@ export default function Repertoire() {
             {available.length === 0 ? (
               <p className="muted">You've added every chord in the library. Nice.</p>
             ) : (
-              <div className="grid">
-                {available.map(lib => (
-                  <div key={lib.id} className="chord-card" onClick={() => addChord(lib.id)}>
-                    <div className="name">{lib.name}</div>
-                    <ChordDiagram shape={lib.shape} size={120} />
-                    <div className="meta">Difficulty {lib.difficulty ?? 1}/5</div>
-                  </div>
-                ))}
-              </div>
+              <LibraryChordGrid chords={available} onPick={addChord} />
             )}
           </div>
         </div>

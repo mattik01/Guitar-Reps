@@ -1,10 +1,20 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ChordDiagram } from '../components/ChordDiagram';
 import { ChordEditor } from '../components/ChordEditor';
-import { useRepertoire, useRoutineLog, type Chord, type ChordShape } from '../state/store';
+import { CleanlinessBadge } from '../components/CleanlinessBadge';
+import { MicMeter } from '../components/MicMeter';
+import { useChordListener } from '../audio/useChordListener';
+import type { StrumEvent } from '../audio/chordListener';
+import { calibratedThresholds, calSampleWeight, type Cleanliness, type Verdict } from '../audio/chroma';
+import { clearMicCalibration, recordCalibrationSample, useMicCalibration, useMicSettings, useRepertoire, useRoutineLog, type Chord, type ChordShape } from '../state/store';
 
 type Phase = 'picking' | 'asking' | 'revealed';
+
+// Grace period after a question appears before the mic arms — so the strum that
+// answered the PREVIOUS question (or finger-settling noise) can't insta-reveal.
+const QUIZ_ARM_DELAY_MS = 1200;
+const QUIZ_AUTO_ADVANCE_S = 4;
 
 export default function ChordQuizRoutine() {
   const [repertoire, setRepertoire] = useRepertoire();
@@ -17,6 +27,26 @@ export default function ChordQuizRoutine() {
   const [gotRight, setGotRight] = useState(0);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [editing, setEditing] = useState(false);
+
+  // --- microphone auto-reveal ---
+  const [micSettings, setMicSettings] = useMicSettings();
+  const [calibration] = useMicCalibration();
+  const [verdict, setVerdict] = useState<Verdict | null>(null);
+  const [strumClean, setStrumClean] = useState<Cleanliness | null>(null);
+  const [strumRevealed, setStrumRevealed] = useState(false); // reveal came from a strum
+  const [selected, setSelected] = useState<'got' | 'not' | null>(null); // countdown default
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [knockFlipped, setKnockFlipped] = useState(false);
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
+  const countdownRef = useRef(countdown);
+  countdownRef.current = countdown;
+  const questionShownAtRef = useRef(0);
+  // Similarity the revealing strum scored against the target — recorded as a
+  // calibration sample if the user confirms "✓ Got it".
+  const lastStrumSimRef = useRef<number | null>(null);
 
   useEffect(() => {
     const presetId = params.get('chord');
@@ -31,10 +61,74 @@ export default function ChordQuizRoutine() {
     return repertoire.filter(c => c.id !== chord?.id);
   }, [repertoire, chord]);
 
+  const micTargets = useMemo(() => {
+    if (!chord) return [];
+    // Use this chord's learned thresholds once it has enough confirmed samples.
+    const th = calibratedThresholds(calibration[chord.id]?.sims ?? []);
+    return [{ id: chord.id, shape: chord.shape, matchThreshold: th?.match, unsureThreshold: th?.unsure }];
+  }, [chord, calibration]);
+  // Keep the mic open across the whole quiz session (asking AND revealed —
+  // revealed needs it for the double-knock override); events are gated below.
+  const micActive = micSettings.enabled && phase !== 'picking' && chord != null;
+
+  function handleStrum(e: StrumEvent) {
+    if (phaseRef.current !== 'asking' || editingRef.current) return;
+    if (Date.now() - questionShownAtRef.current < QUIZ_ARM_DELAY_MS) return;
+    lastStrumSimRef.current = e.matches[0]?.similarity ?? null;
+    setStrumClean(e.cleanliness);
+    setVerdict(e.verdict);
+    setStrumRevealed(true);
+    setSelected(e.verdict === 'match' ? 'got' : 'not');
+    setCountdown(QUIZ_AUTO_ADVANCE_S);
+    setPhase('revealed');
+    setEditing(false);
+  }
+
+  function handleDoubleKnock() {
+    if (phaseRef.current !== 'revealed' || editingRef.current) return;
+    // Flip only while the countdown is live; a knock long after is meaningless.
+    if (countdownRef.current == null) return;
+    setSelected(s => (s === 'got' ? 'not' : 'got'));
+    setKnockFlipped(true);
+    setCountdown(QUIZ_AUTO_ADVANCE_S); // restart so the flip is visible (and re-flippable)
+  }
+
+  const mic = useChordListener({
+    enabled: micActive,
+    targets: micTargets,
+    onStrum: handleStrum,
+    onDoubleKnock: handleDoubleKnock,
+  });
+
+  // Auto-advance countdown: ticks once a second; on expiry fires the
+  // pre-selected default. Any button click cancels it by advancing directly.
+  useEffect(() => {
+    if (countdown == null) return;
+    if (countdown <= 0) {
+      if (selected === 'got') gotIt(); else didNot();
+      return;
+    }
+    const t = window.setTimeout(() => setCountdown(c => (c == null ? null : c - 1)), 1000);
+    return () => window.clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countdown]);
+
+  function resetMicQuestionState() {
+    setVerdict(null);
+    setStrumClean(null);
+    setStrumRevealed(false);
+    setSelected(null);
+    setCountdown(null);
+    setKnockFlipped(false);
+    questionShownAtRef.current = Date.now();
+    lastStrumSimRef.current = null;
+  }
+
   function ask(c: Chord) {
     setChord(c);
     setPhase('asking');
     setAsked(a => a + 1);
+    resetMicQuestionState();
     if (!startedAt) setStartedAt(Date.now());
   }
 
@@ -55,6 +149,10 @@ export default function ChordQuizRoutine() {
 
   function saveEdit(value: { name: string; shape: ChordShape }) {
     if (!chord) return;
+    // Calibration samples describe the old shape — drop them if it changed.
+    if (JSON.stringify(value.shape) !== JSON.stringify(chord.shape)) {
+      clearMicCalibration(chord.id);
+    }
     setRepertoire(prev => prev.map(c =>
       c.id === chord.id ? { ...c, name: value.name, shape: value.shape } : c
     ));
@@ -67,6 +165,18 @@ export default function ChordQuizRoutine() {
       setRepertoire(prev => prev.map(c =>
         c.id === chord.id ? { ...c, perfectReps: c.perfectReps + 1 } : c
       ));
+      // "Got it" with the diagram in view = a confirmed-correct strum: record
+      // its similarity so this chord's verdict thresholds calibrate to how it
+      // actually sounds on this guitar/mic. Overrides of a wrong "didn't
+      // match" verdict are the most valuable samples here. Weighted by the
+      // strum's cleanliness — a muddy strum's similarity is depressed by the
+      // mud and says little about the chord's true level (too-dirty strums
+      // are skipped entirely: calSampleWeight returns null).
+      const sim = lastStrumSimRef.current;
+      if (micSettings.calibrate && strumRevealed && sim != null) {
+        const weight = calSampleWeight(strumClean?.score);
+        if (weight != null) recordCalibrationSample(chord.id, sim, weight);
+      }
     }
     setGotRight(g => g + 1);
     askRandom();
@@ -90,6 +200,7 @@ export default function ChordQuizRoutine() {
     setAsked(0);
     setGotRight(0);
     setStartedAt(null);
+    resetMicQuestionState();
   }
 
   if (repertoire.length === 0) {
@@ -123,6 +234,16 @@ export default function ChordQuizRoutine() {
             <button className="button primary huge" onClick={askRandom}>
               🎲 Start — random chord
             </button>
+            <label className="toggle">
+              <input type="checkbox" checked={micSettings.enabled}
+                onChange={e => setMicSettings(prev => ({ ...prev, enabled: e.target.checked }))} />
+              🎙 Auto-reveal when I strum
+            </label>
+            <label className="toggle" title="Learn per-chord thresholds from strums you confirm as correct">
+              <input type="checkbox" checked={!!micSettings.calibrate} disabled={!micSettings.enabled}
+                onChange={e => setMicSettings(prev => ({ ...prev, calibrate: e.target.checked }))} />
+              🎯 Auto-calibrate
+            </label>
           </div>
           <hr style={{ border: 0, borderTop: '1px solid var(--line)', margin: '16px 0' }} />
           <h3>Or pick a specific chord</h3>
@@ -161,6 +282,22 @@ export default function ChordQuizRoutine() {
             <p className="muted" style={{ marginTop: 20 }}>
               Place your fingers, strum, check every string. Reveal when you're ready.
             </p>
+            {micActive && mic.state === 'listening' && (
+              <>
+                <div className="row mic-listening-hint" style={{ justifyContent: 'center', marginBottom: 8 }}>
+                  <span className="muted">🎙 listening — strum when ready</span>
+                  <MicMeter getLevel={mic.getLevel} state={mic.state} error={mic.error} />
+                </div>
+                {micSettings.calibrate && (
+                  <p className="muted" style={{ marginTop: 0 }}>
+                    🎯 Auto-calibration is on — play as cleanly as you can, in a quiet room.
+                  </p>
+                )}
+              </>
+            )}
+            {micActive && (mic.state === 'denied' || mic.state === 'error') && (
+              <p className="muted">🎙 {mic.error ?? 'Mic unavailable'} — reveal by button as usual.</p>
+            )}
             <div className="footer-bar" style={{ justifyContent: 'center' }}>
               <button className="button primary huge" onClick={reveal} style={{ maxWidth: 420 }}>
                 Reveal diagram
@@ -169,11 +306,26 @@ export default function ChordQuizRoutine() {
           </>
         ) : (
           <>
+            {strumRevealed && verdict && (
+              <>
+                <div className={`verdict-banner ${verdict === 'match' ? 'match' : verdict === 'nomatch' ? 'nomatch' : ''}`}>
+                  {verdict === 'match' && 'Sounded right ✓'}
+                  {verdict === 'unsure' && 'Heard a strum — couldn’t tell. Judge from the diagram.'}
+                  {verdict === 'nomatch' && 'Hmm — didn’t quite match'}
+                  {knockFlipped && <span className="muted" style={{ fontWeight: 400 }}> · flipped 🥁</span>}
+                </div>
+                {strumClean && (
+                  <div style={{ marginTop: 2 }}>
+                    <CleanlinessBadge clean={strumClean} />
+                  </div>
+                )}
+              </>
+            )}
             <div style={{ margin: '24px 0', position: 'relative' }}>
               <ChordDiagram shape={chord.shape} size={240} />
               <button
                 className="button"
-                onClick={() => setEditing(v => !v)}
+                onClick={() => { setCountdown(null); setEditing(v => !v); }}
                 style={{ position: 'absolute', top: 0, right: 0 }}
                 title="Edit this chord"
               >
@@ -181,10 +333,21 @@ export default function ChordQuizRoutine() {
               </button>
             </div>
             {!editing && (
-              <div className="footer-bar" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
-                <button className="button primary big" onClick={gotIt}>✓ Got it — next</button>
-                <button className="button big" onClick={didNot}>✗ Didn't know — next</button>
-              </div>
+              <>
+                <div className="footer-bar" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <button className={`button big ${selected !== 'not' ? 'primary' : ''}`} onClick={gotIt}>
+                    ✓ Got it — next{countdown != null && selected === 'got' ? ` (${countdown})` : ''}
+                  </button>
+                  <button className={`button big ${selected === 'not' ? 'primary' : ''}`} onClick={didNot}>
+                    ✗ Didn't know — next{countdown != null && selected === 'not' ? ` (${countdown})` : ''}
+                  </button>
+                </div>
+                {countdown != null && (
+                  <p className="muted" style={{ marginTop: 8 }}>
+                    knock ×2 on the guitar body (strings muted) to flip
+                  </p>
+                )}
+              </>
             )}
           </>
         )}

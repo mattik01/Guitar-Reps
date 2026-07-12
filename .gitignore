@@ -5,5 +5,20 @@ dist-ssr
 .vite
 .DS_Store
 
+# TypeScript build output (tsc -b) — regenerated, not source
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+
 # Playwright MCP debug artifacts
 .playwright-mcp/
+
+# Song-catalog: raw source datasets + generated DB artifacts (large; regenerate via npm run build:catalog)
+data/raw/*
+!data/raw/README.md
+public/catalog.sqlite
+public/catalog.sqlite.gz
+public/catalog.meta.json
+
+# Transient enrichment/run logs
+*.log
