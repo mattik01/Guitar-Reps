@@ -1,12 +1,7 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { dayKey, useRepertoire, useRoutineLog, useSwapRecords, type RoutineKind, type RoutineLog } from '../state/store';
-
-const KIND_COLOR: Record<RoutineKind, string> = {
-  chord: '#2b5bd7',
-  swap: '#2e8b57',
-  strum: '#c0690b',
-};
+import { dayKey, useRepertoire, useRoutineLog, useSwapRecords } from '../state/store';
+import { DayActivityGrid, buildDayCells } from '../components/DayActivityGrid';
 
 export default function Home() {
   const [repertoire] = useRepertoire();
@@ -16,7 +11,7 @@ export default function Home() {
   const todayKey = dayKey(Date.now());
   const todayCount = log.filter(l => dayKey(l.at) === todayKey).length;
   const bestSwap = Object.values(swaps).sort((a, b) => b.bestCount - a.bestCount)[0];
-  const days = useMemo(() => buildWeek(log, 7), [log]);
+  const days = useMemo(() => buildDayCells(log, 7), [log]);
 
   const canSwap = repertoire.length >= 2;
 
@@ -60,35 +55,8 @@ export default function Home() {
           <div className="spacer" />
           <Link to="/progress" className="button">Full progress</Link>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))`, gap: 6, marginTop: 10 }}>
-          {days.map(d => {
-            const byKind: Record<RoutineKind, number> = { chord: 0, swap: 0, strum: 0 };
-            for (const e of d.entries) byKind[e.kind]++;
-            const isToday = d.key === todayKey;
-            const weekday = d.date.toLocaleDateString(undefined, { weekday: 'short' });
-            return (
-              <div key={d.key} style={{
-                border: `1px solid ${isToday ? 'var(--ink)' : 'var(--line)'}`,
-                borderRadius: 10,
-                padding: 6,
-                minHeight: 74,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 2,
-                background: 'var(--panel)',
-              }}>
-                <div style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 700 }}>{weekday}</div>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>{d.date.getDate()}</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, marginTop: 'auto' }}>
-                  {(['chord', 'swap', 'strum'] as RoutineKind[]).flatMap(k =>
-                    Array.from({ length: byKind[k] }).map((_, i) => (
-                      <div key={`${k}-${i}`} style={{ width: 8, height: 8, borderRadius: '50%', background: KIND_COLOR[k] }} />
-                    ))
-                  )}
-                </div>
-              </div>
-            );
-          })}
+        <div style={{ marginTop: 10 }}>
+          <DayActivityGrid days={days} compact />
         </div>
       </div>
 
@@ -101,23 +69,4 @@ export default function Home() {
       </div>
     </div>
   );
-}
-
-type DayCell = { key: string; date: Date; entries: RoutineLog[] };
-
-function buildWeek(log: RoutineLog[], numDays: number): DayCell[] {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const cells: DayCell[] = [];
-  for (let i = numDays - 1; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - i);
-    cells.push({ key: dayKey(d.getTime()), date: d, entries: [] });
-  }
-  const byKey = new Map(cells.map(c => [c.key, c]));
-  for (const l of log) {
-    const k = dayKey(l.at);
-    byKey.get(k)?.entries.push(l);
-  }
-  return cells;
 }

@@ -3,11 +3,16 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { ChordDiagram } from '../components/ChordDiagram';
 import { ChordEditor } from '../components/ChordEditor';
 import { CleanlinessBadge } from '../components/CleanlinessBadge';
+import { MicDiagnostics, strumLogDetail, type MicLogEntry } from '../components/MicDiagnostics';
 import { MicMeter } from '../components/MicMeter';
+import { MicInputTuning } from '../components/MicInputTuning';
+import { MicSettingsToggles } from '../components/MicSettingsToggles';
 import { useChordListener } from '../audio/useChordListener';
-import type { StrumEvent } from '../audio/chordListener';
+import type { KnockEvent, StrumEvent } from '../audio/chordListener';
 import { calibratedThresholds, calSampleWeight, type Cleanliness, type Verdict } from '../audio/chroma';
 import { clearMicCalibration, recordCalibrationSample, useMicCalibration, useMicSettings, useRepertoire, useRoutineLog, type Chord, type ChordShape } from '../state/store';
+import { libraryChordById, materializeLibraryChord } from '../data/chordLibrary';
+import type { ChordCategoryId } from '../data/chordCategories';
 
 type Phase = 'picking' | 'asking' | 'revealed';
 
@@ -27,6 +32,11 @@ export default function ChordQuizRoutine() {
   const [gotRight, setGotRight] = useState(0);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [editing, setEditing] = useState(false);
+  // Deep-linked chord id that isn't in the repertoire yet — prompts manual registration.
+  const [registerId, setRegisterId] = useState<string | null>(null);
+  // The current chord is a library chord being previewed but not yet owned: the
+  // reveal offers "Add to repertoire" / "Don't add" instead of Got it / Didn't know.
+  const [preview, setPreview] = useState(false);
 
   // --- microphone auto-reveal ---
   const [micSettings, setMicSettings] = useMicSettings();
@@ -37,6 +47,7 @@ export default function ChordQuizRoutine() {
   const [selected, setSelected] = useState<'got' | 'not' | null>(null); // countdown default
   const [countdown, setCountdown] = useState<number | null>(null);
   const [knockFlipped, setKnockFlipped] = useState(false);
+  const [debugLog, setDebugLog] = useState<MicLogEntry[]>([]);
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
   const editingRef = useRef(editing);
@@ -44,22 +55,46 @@ export default function ChordQuizRoutine() {
   const countdownRef = useRef(countdown);
   countdownRef.current = countdown;
   const questionShownAtRef = useRef(0);
+  const previewRef = useRef(preview);
+  previewRef.current = preview;
   // Similarity the revealing strum scored against the target — recorded as a
   // calibration sample if the user confirms "✓ Got it".
   const lastStrumSimRef = useRef<number | null>(null);
 
   useEffect(() => {
     const presetId = params.get('chord');
-    if (presetId && phase === 'picking') {
-      const c = repertoire.find(r => r.id === presetId);
-      if (c) ask(c);
-    }
+    if (!presetId || phase !== 'picking') return;
+    const c = repertoire.find(r => r.id === presetId);
+    if (c) { ask(c); return; }                    // already owned → quiz as normal
+    const lib = materializeLibraryChord(presetId);
+    if (lib) { ask(lib, true); return; }          // in the library, not owned → preview + offer to add
+    setRegisterId(presetId);                       // not in the library at all → register it manually
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Register a deep-linked, not-yet-owned chord into the repertoire, then quiz it.
+  // If the id happens to be a known library chord, its shape/category prefill the editor.
+  function registerAndAsk(value: { name: string; shape: ChordShape; category?: ChordCategoryId }) {
+    if (!registerId) return;
+    const lib = libraryChordById(registerId);
+    const chord: Chord = {
+      id: registerId, name: value.name, shape: value.shape,
+      category: value.category, difficulty: lib?.difficulty, importance: lib?.importance, info: lib?.info,
+      learnedAt: Date.now(), perfectReps: 0,
+    };
+    setRepertoire(prev => prev.some(c => c.id === chord.id) ? prev : [...prev, chord]);
+    setRegisterId(null);
+    ask(chord);
+  }
 
   const otherChords = useMemo(() => {
     return repertoire.filter(c => c.id !== chord?.id);
   }, [repertoire, chord]);
+
+  const chordNames = useMemo(() => new Map(repertoire.map(c => [c.id, c.name])), [repertoire]);
+  function pushDebug(entry: MicLogEntry) {
+    setDebugLog(prev => [entry, ...prev].slice(0, 80));
+  }
 
   const micTargets = useMemo(() => {
     if (!chord) return [];
@@ -72,19 +107,24 @@ export default function ChordQuizRoutine() {
   const micActive = micSettings.enabled && phase !== 'picking' && chord != null;
 
   function handleStrum(e: StrumEvent) {
+    if (micSettings.debug) pushDebug({ at: e.at, kind: 'strum', detail: strumLogDetail(e) });
     if (phaseRef.current !== 'asking' || editingRef.current) return;
     if (Date.now() - questionShownAtRef.current < QUIZ_ARM_DELAY_MS) return;
     lastStrumSimRef.current = e.matches[0]?.similarity ?? null;
     setStrumClean(e.cleanliness);
     setVerdict(e.verdict);
     setStrumRevealed(true);
-    setSelected(e.verdict === 'match' ? 'got' : 'not');
-    setCountdown(QUIZ_AUTO_ADVANCE_S);
+    // Preview chords have Add/Don't-add (no Got/Didn't), so skip the auto-advance countdown.
+    if (!previewRef.current) {
+      setSelected(e.verdict === 'match' ? 'got' : 'not');
+      setCountdown(QUIZ_AUTO_ADVANCE_S);
+    }
     setPhase('revealed');
     setEditing(false);
   }
 
-  function handleDoubleKnock() {
+  function handleDoubleKnock(e: KnockEvent) {
+    if (micSettings.debug) pushDebug({ at: e.at, kind: 'double-knock', detail: '🥁 double knock' });
     if (phaseRef.current !== 'revealed' || editingRef.current) return;
     // Flip only while the countdown is live; a knock long after is meaningless.
     if (countdownRef.current == null) return;
@@ -96,7 +136,12 @@ export default function ChordQuizRoutine() {
   const mic = useChordListener({
     enabled: micActive,
     targets: micTargets,
+    activationThreshold: micSettings.activationThreshold,
+    filters: micSettings.filters,
+    filterHpHz: micSettings.filterHpHz,
+    filterLpHz: micSettings.filterLpHz,
     onStrum: handleStrum,
+    onKnock: e => { if (micSettings.debug) pushDebug({ at: e.at, kind: 'knock', detail: 'percussive onset' }); },
     onDoubleKnock: handleDoubleKnock,
   });
 
@@ -122,10 +167,12 @@ export default function ChordQuizRoutine() {
     setKnockFlipped(false);
     questionShownAtRef.current = Date.now();
     lastStrumSimRef.current = null;
+    setDebugLog([]);
   }
 
-  function ask(c: Chord) {
+  function ask(c: Chord, isPreview = false) {
     setChord(c);
+    setPreview(isPreview);
     setPhase('asking');
     setAsked(a => a + 1);
     resetMicQuestionState();
@@ -134,12 +181,21 @@ export default function ChordQuizRoutine() {
 
   function askRandom() {
     const pool = chord ? otherChords : repertoire;
-    if (pool.length === 0) {
-      if (repertoire.length === 0) return;
-      ask(repertoire[Math.floor(Math.random() * repertoire.length)]);
-      return;
-    }
-    ask(pool[Math.floor(Math.random() * pool.length)]);
+    const source = pool.length ? pool : repertoire;
+    if (source.length === 0) { setChord(null); setPreview(false); setPhase('picking'); return; }
+    ask(source[Math.floor(Math.random() * source.length)]);
+  }
+
+  // A previewed (unowned) library chord: after the reveal, add it to the repertoire
+  // or skip — then carry on quizzing whatever's in the repertoire.
+  function addPreviewToRepertoire() {
+    if (chord) setRepertoire(prev => prev.some(c => c.id === chord.id) ? prev : [...prev, chord]);
+    setPreview(false);
+    askRandom();
+  }
+  function skipPreview() {
+    setPreview(false);
+    askRandom();
   }
 
   function reveal() {
@@ -203,7 +259,38 @@ export default function ChordQuizRoutine() {
     resetMicQuestionState();
   }
 
-  if (repertoire.length === 0) {
+  // A deep link asked for a chord that isn't in the repertoire — register it first.
+  if (registerId && phase === 'picking') {
+    const lib = libraryChordById(registerId);
+    return (
+      <div>
+        <div className="row">
+          <Link to="/" className="button">← Home</Link>
+          <h1 style={{ margin: 0 }}>Chord quiz</h1>
+        </div>
+        <div className="card">
+          <p style={{ margin: 0 }}>
+            <strong>{registerId}</strong> isn’t in your repertoire yet. Register it — draw the shape
+            and pick a category — to quiz yourself on it.
+          </p>
+        </div>
+        <ChordEditor
+          title={`Register ${registerId}`}
+          initialName={registerId}
+          initialShape={lib?.fingerings[0]?.shape}
+          withCategory
+          initialCategory={lib?.category ?? 'other'}
+          saveLabel="Save & quiz"
+          onSave={registerAndAsk}
+          onCancel={() => setRegisterId(null)}
+        />
+      </div>
+    );
+  }
+
+  // Empty-repertoire prompt only when idle — a previewed library chord (phase
+  // 'asking'/'revealed') must still show even with nothing else in the repertoire.
+  if (repertoire.length === 0 && phase === 'picking') {
     return (
       <div>
         <div className="row">
@@ -234,16 +321,8 @@ export default function ChordQuizRoutine() {
             <button className="button primary huge" onClick={askRandom}>
               🎲 Start — random chord
             </button>
-            <label className="toggle">
-              <input type="checkbox" checked={micSettings.enabled}
-                onChange={e => setMicSettings(prev => ({ ...prev, enabled: e.target.checked }))} />
-              🎙 Auto-reveal when I strum
-            </label>
-            <label className="toggle" title="Learn per-chord thresholds from strums you confirm as correct">
-              <input type="checkbox" checked={!!micSettings.calibrate} disabled={!micSettings.enabled}
-                onChange={e => setMicSettings(prev => ({ ...prev, calibrate: e.target.checked }))} />
-              🎯 Auto-calibrate
-            </label>
+            <MicSettingsToggles micSettings={micSettings} setMicSettings={setMicSettings}
+              micLabel="🎙 Auto-reveal when I strum" />
           </div>
           <hr style={{ border: 0, borderTop: '1px solid var(--line)', margin: '16px 0' }} />
           <h3>Or pick a specific chord</h3>
@@ -287,6 +366,9 @@ export default function ChordQuizRoutine() {
                 <div className="row mic-listening-hint" style={{ justifyContent: 'center', marginBottom: 8 }}>
                   <span className="muted">🎙 listening — strum when ready</span>
                   <MicMeter getLevel={mic.getLevel} state={mic.state} error={mic.error} />
+                </div>
+                <div style={{ maxWidth: 460, margin: '0 auto 8px' }}>
+                  <MicInputTuning getLevel={mic.getLevel} state={mic.state} compact />
                 </div>
                 {micSettings.calibrate && (
                   <p className="muted" style={{ marginTop: 0 }}>
@@ -332,7 +414,21 @@ export default function ChordQuizRoutine() {
                 ✏️ Edit
               </button>
             </div>
-            {!editing && (
+            {!editing && (preview ? (
+              <>
+                <div className="muted" style={{ marginBottom: 8 }}>
+                  This chord isn’t in your repertoire yet.
+                </div>
+                <div className="footer-bar" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <button className="button big primary" onClick={addPreviewToRepertoire}>
+                    ➕ Add to repertoire
+                  </button>
+                  <button className="button big" onClick={skipPreview}>
+                    Don’t add
+                  </button>
+                </div>
+              </>
+            ) : (
               <>
                 <div className="footer-bar" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
                   <button className={`button big ${selected !== 'not' ? 'primary' : ''}`} onClick={gotIt}>
@@ -348,7 +444,7 @@ export default function ChordQuizRoutine() {
                   </p>
                 )}
               </>
-            )}
+            ))}
           </>
         )}
       </div>
@@ -362,6 +458,10 @@ export default function ChordQuizRoutine() {
           onSave={saveEdit}
           onCancel={() => setEditing(false)}
         />
+      )}
+
+      {micSettings.enabled && micSettings.debug && (
+        <MicDiagnostics getLiveChroma={mic.getLiveChroma} getLevel={mic.getLevel} state={mic.state} targets={micTargets} log={debugLog} names={chordNames} />
       )}
 
       <div className="footer-bar">

@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom';
 import { ChordDiagram } from '../components/ChordDiagram';
 import { ChordEditor } from '../components/ChordEditor';
 import { LibraryChordGrid } from '../components/LibraryChordGrid';
-import { CHORD_LIBRARY } from '../data/chordLibrary';
+import { CHORD_LIBRARY, materializeLibraryChord } from '../data/chordLibrary';
+import type { ChordCategoryId } from '../data/chordCategories';
 import { useFingeringChoice, useRepertoire, type Chord, type ChordShape } from '../state/store';
 
 export default function NewChordRoutine() {
@@ -21,14 +22,8 @@ export default function NewChordRoutine() {
   );
 
   function addFromLibrary(id: string) {
-    const lib = CHORD_LIBRARY.find(c => c.id === id);
-    if (!lib) return;
-    const idx = Math.min(Math.max(fingeringChoice[id] ?? 0, 0), lib.fingerings.length - 1);
-    const chord: Chord = {
-      id: lib.id, name: lib.name, shape: lib.fingerings[idx].shape,
-      category: lib.category, difficulty: lib.difficulty, importance: lib.importance,
-      info: lib.info, learnedAt: Date.now(), perfectReps: 0,
-    };
+    const chord = materializeLibraryChord(id, fingeringChoice[id] ?? 0);
+    if (!chord) return;
     setRepertoire(prev => [...prev, chord]);
     setJustAdded(chord);
     setCustomOpen(false);
@@ -40,11 +35,11 @@ export default function NewChordRoutine() {
     addFromLibrary(available[Math.floor(Math.random() * available.length)].id);
   }
 
-  function addCustom(value: { name: string; shape: ChordShape }) {
+  function addCustom(value: { name: string; shape: ChordShape; category?: ChordCategoryId }) {
     let id = value.name;
     if (owned.has(id)) id = `${value.name}-${Date.now().toString(36)}`;
     const chord: Chord = {
-      id, name: value.name, shape: value.shape,
+      id, name: value.name, shape: value.shape, category: value.category ?? 'other',
       learnedAt: Date.now(), perfectReps: 0,
     };
     setRepertoire(prev => [...prev, chord]);
@@ -124,7 +119,7 @@ export default function NewChordRoutine() {
       </div>
 
       {customOpen && (
-        <ChordEditor onSave={addCustom} onCancel={() => setCustomOpen(false)} saveLabel="Save to repertoire" />
+        <ChordEditor withCategory onSave={addCustom} onCancel={() => setCustomOpen(false)} saveLabel="Save to repertoire" />
       )}
 
       <h2 style={{ marginTop: 20 }}>Pick one from the library</h2>

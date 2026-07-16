@@ -379,8 +379,99 @@ input[type="number"], select {
 .chroma-bar-fill {
   width: 100%;
   background: var(--accent);
+  transition: height 60ms linear;
 }
 .chroma-bar-label { font-size: 12px; color: var(--muted, #777); }
+
+/* Mic diagnostics: main column + tall events log on the side. */
+.mic-diag {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 12px;
+  align-items: start;
+  margin-top: 12px;
+}
+.mic-diag-main { min-width: 0; }
+.mic-diag-events {
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+}
+@media (max-width: 720px) {
+  .mic-diag { grid-template-columns: 1fr; }
+  .mic-diag-events { position: static; max-height: none; }
+}
+
+/* Discord-style activation-threshold control: live level meter + draggable
+   threshold marker + range slider, all on the same 0..1 scale. */
+.threshold-track {
+  position: relative;
+  height: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.threshold-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--good);
+  transition: width 60ms linear;
+}
+.threshold-track.draggable { cursor: ew-resize; touch-action: none; }
+.threshold-marker {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 3px;
+  background: var(--ink);
+  transform: translateX(-1.5px);
+  pointer-events: none; /* clicks fall through to the track */
+}
+/* grab-knob on top of the marker line (Discord-style handle) */
+.threshold-track.draggable .threshold-marker::after {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--ink);
+  transform: translateX(-50%);
+}
+.filter-tune .tune-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 8px;
+  font-size: 13px;
+}
+.button.small { padding: 2px 8px; font-size: 12px; }
+.threshold-slider {
+  width: 100%;
+  margin: 8px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.mic-tuning.compact { padding: 10px 12px; }
+.mic-tuning.compact .threshold-slider { margin-top: 6px; }
+
+/* Calibration Studio + index */
+.cal-score { font-weight: 700; font-size: 18px; }
+.cal-score.good { color: var(--good); }
+.cal-bar { height: 10px; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; background: var(--panel); margin-top: 8px; }
+.cal-bar-fill { height: 100%; width: 0; background: var(--accent); transition: width 200ms linear; }
+.cal-chip { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.cal-chip.good { color: var(--good); font-weight: 700; }
+.cal-chip.partial { color: var(--accent); }
+.cal-capture { animation: calpop 300ms ease; }
+@keyframes calpop { 0% { transform: scale(1); } 40% { transform: scale(1.15); } 100% { transform: scale(1); } }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg-btn { padding: 5px 12px; border: 0; background: var(--panel); color: var(--ink); cursor: pointer; font-size: 13px; }
+.seg-btn.on { background: var(--accent); color: var(--accent-ink); }
+.seg-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .verdict-banner {
   padding: 10px 16px;

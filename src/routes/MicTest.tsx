@@ -1,32 +1,28 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { MicMeter } from '../components/MicMeter';
+import { MicDiagnostics, strumLogDetail, type MicLogEntry } from '../components/MicDiagnostics';
 import { CHORD_LIBRARY, libraryPrimaryShape } from '../data/chordLibrary';
-import { calibratedThresholds, chordTemplate, cosineSim, totalSampleWeight, typicalSimilarity } from '../audio/chroma';
+import { calibratedThresholds, typicalSimilarity } from '../audio/chroma';
 import { useChordListener } from '../audio/useChordListener';
 import type { StrumEvent } from '../audio/chordListener';
-import { useMicCalibration } from '../state/store';
+import { useMicCalibration, useMicSettings } from '../state/store';
 
 // Debug/calibration page (URL-only: /mic-test). This is where the detection
 // constants in src/audio/chroma.ts + chordListener.ts get tuned against a real
 // guitar, mic, and room. Keep it around — it's also the fastest way to diagnose
-// "the mic feature stopped working on my laptop".
-
-const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-
-type LogEntry = {
-  at: number;
-  kind: 'strum' | 'knock' | 'double-knock';
-  detail: string;
-};
+// "the mic feature stopped working on my laptop". The panels below are shared
+// with the exercises' "🔬 Detection details" toggle via <MicDiagnostics>.
 
 export default function MicTest() {
   const [running, setRunning] = useState(false);
   const [targetA, setTargetA] = useState(CHORD_LIBRARY[0]?.id ?? '');
   const [targetB, setTargetB] = useState(CHORD_LIBRARY[1]?.id ?? '');
-  const [log, setLog] = useState<LogEntry[]>([]);
-  const [liveChroma, setLiveChroma] = useState<Float32Array>(new Float32Array(12));
-  const [calibration, setCalibration] = useMicCalibration();
+  const [log, setLog] = useState<MicLogEntry[]>([]);
+  const [calibration] = useMicCalibration();
+  const [micSettings] = useMicSettings();
+
+  const names = useMemo(() => new Map(CHORD_LIBRARY.map(c => [c.id, c.name])), []);
 
   const targets = useMemo(() => {
     return [targetA, targetB]
@@ -45,39 +41,21 @@ export default function MicTest() {
       });
   }, [targetA, targetB, calibration]);
 
-  const templates = useMemo(
-    () => targets.map(t => ({ id: t.id, tpl: chordTemplate(t.shape) })),
-    [targets]
-  );
-
-  function pushLog(entry: LogEntry) {
-    setLog(prev => [entry, ...prev].slice(0, 12));
+  function pushLog(entry: MicLogEntry) {
+    setLog(prev => [entry, ...prev].slice(0, 80));
   }
 
-  const { state, error, getLevel, getLiveChroma } = useChordListener({
+  const { state, error, getLevel, getLiveChroma, getSpectrum, getSpectrumMeta } = useChordListener({
     enabled: running,
     targets,
-    onStrum: (e: StrumEvent) => pushLog({
-      at: e.at,
-      kind: 'strum',
-      detail: `${e.matches.map(m => `${m.id} ${m.similarity.toFixed(3)}`).join(' · ')} → best ${e.best ?? '(unsure)'} · verdict ${e.verdict} · sustain ${e.sustain.toFixed(2)} · pcs ${e.activePc}`
-        + (e.cleanliness
-          ? ` · clean ${e.cleanliness.score} (comp ${e.cleanliness.completeness.toFixed(2)} pur ${e.cleanliness.purity.toFixed(2)} ton ${e.cleanliness.tonality.toFixed(2)} sus ${e.cleanliness.sustain.toFixed(2)})`
-          : ''),
-    }),
+    activationThreshold: micSettings.activationThreshold,
+    filters: micSettings.filters,
+    filterHpHz: micSettings.filterHpHz,
+    filterLpHz: micSettings.filterLpHz,
+    onStrum: (e: StrumEvent) => pushLog({ at: e.at, kind: 'strum', detail: strumLogDetail(e) }),
     onKnock: e => pushLog({ at: e.at, kind: 'knock', detail: 'percussive onset' }),
     onDoubleKnock: e => pushLog({ at: e.at, kind: 'double-knock', detail: '🥁 double knock' }),
   });
-
-  // 10 Hz chroma refresh — plenty for eyeballing, cheap enough for a debug page.
-  useEffect(() => {
-    if (state !== 'listening') return;
-    const id = window.setInterval(() => setLiveChroma(getLiveChroma().slice()), 100);
-    return () => window.clearInterval(id);
-  }, [state, getLiveChroma]);
-
-  const liveSims = templates.map(t => ({ id: t.id, sim: cosineSim(liveChroma, t.tpl) }));
-  const maxBin = Math.max(...Array.from(liveChroma), 1e-6);
 
   return (
     <div>
@@ -113,74 +91,7 @@ export default function MicTest() {
         </div>
       </div>
 
-      {state === 'listening' && (
-        <div className="card" style={{ marginTop: 12 }}>
-          <h3 style={{ marginTop: 0 }}>Live chroma</h3>
-          <div className="chroma-bars">
-            {NOTE_NAMES.map((n, i) => (
-              <div key={n} className="chroma-bar">
-                <div className="chroma-bar-track">
-                  <div className="chroma-bar-fill" style={{ height: `${Math.round((liveChroma[i] / maxBin) * 100)}%` }} />
-                </div>
-                <div className="chroma-bar-label">{n}</div>
-              </div>
-            ))}
-          </div>
-          <div className="row" style={{ marginTop: 10 }}>
-            {liveSims.map(s => (
-              <div key={s.id} className="muted">
-                live sim <strong>{s.id}</strong>: {s.sim.toFixed(3)}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {Object.keys(calibration).length > 0 && (
-        <div className="card" style={{ marginTop: 12 }}>
-          <div className="row">
-            <h3 style={{ margin: 0 }}>🎯 Auto-calibration</h3>
-            <div className="spacer" />
-            <button className="button" onClick={() => setCalibration({})}>Reset all</button>
-          </div>
-          <div className="col" style={{ marginTop: 8 }}>
-            {Object.entries(calibration).map(([id, entry]) => {
-              const th = calibratedThresholds(entry.sims);
-              const typ = typicalSimilarity(entry.sims);
-              const name = CHORD_LIBRARY.find(c => c.id === id)?.name ?? id;
-              return (
-                <div key={id} className="row" style={{ borderTop: '1px solid var(--line)', paddingTop: 6 }}>
-                  <div style={{ fontWeight: 700, minWidth: 80 }}>{name}</div>
-                  <div className="muted" style={{ fontFamily: 'monospace', fontSize: 13 }}>
-                    {entry.sims.length} sample{entry.sims.length === 1 ? '' : 's'} (Σw {totalSampleWeight(entry.sims).toFixed(1)})
-                    {th
-                      ? ` · match ≥ ${th.match.toFixed(3)} · unsure ≥ ${th.unsure.toFixed(3)} · typical ${typ?.toFixed(3)}`
-                      : ' · not enough evidence yet'}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      <div className="card" style={{ marginTop: 12 }}>
-        <h3 style={{ marginTop: 0 }}>Events (latest first)</h3>
-        {log.length === 0 ? (
-          <p className="muted">Nothing detected yet.</p>
-        ) : (
-          <div className="col">
-            {log.map((e, i) => (
-              <div key={`${e.at}-${i}`} className="row" style={{ borderTop: '1px solid var(--line)', paddingTop: 6 }}>
-                <div style={{ fontWeight: 700, minWidth: 110 }}>
-                  {e.kind === 'strum' ? '🎸 strum' : e.kind === 'knock' ? '👊 knock' : '🥁 double'}
-                </div>
-                <div className="muted" style={{ fontFamily: 'monospace', fontSize: 13 }}>{e.detail}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <MicDiagnostics getLiveChroma={getLiveChroma} getLevel={getLevel} state={state} targets={targets} log={log} names={names} getSpectrum={getSpectrum} getSpectrumMeta={getSpectrumMeta} />
     </div>
   );
 }

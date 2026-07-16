@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
-import { usePlaylists, useSongs, useRepertoire } from '../state/store';
+import { useEffect, useMemo, useState } from 'react';
+import { usePlaylists, useSongs, useSongOverlays, useRepertoire, mergeSong, migrateSongsToRefs, resolveAndRefreshSongs } from '../state/store';
+import { useCatalog } from '../data/catalogDb';
 import { knownSetAtLevel, isKnown, type MatchLevel } from '../data/chordNormalize';
 import { importSpotifyPlaylist, parsePlaylistId, type ImportResult } from '../data/spotifyImport';
 import { SongCard } from '../components/SongCard';
@@ -9,7 +10,12 @@ import { PlaylistPicker } from '../components/PlaylistPicker';
 export default function Playlists() {
   const [playlists, setPlaylists] = usePlaylists();
   const [songs] = useSongs();
+  const [overlays] = useSongOverlays();
   const [repertoire] = useRepertoire();
+
+  // Cheap, catalog-independent: stamp refs + move inline edits into overlays so display
+  // can merge them. (The heavier live catalog resolve is gated on having songs below.)
+  useEffect(() => { migrateSongsToRefs(); }, []);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
@@ -32,7 +38,11 @@ export default function Playlists() {
     () => knownSetAtLevel(repertoire.flatMap(c => [c.name, c.id]), level),
     [repertoire, level],
   );
-  const songById = useMemo(() => new Map(songs.map(s => [s.id, s])), [songs]);
+  // Display = catalog cache ⊕ user overlay, keyed by song id for playlist lookup.
+  const songById = useMemo(
+    () => new Map(songs.map(s => [s.id, mergeSong(s, s.ref ? overlays[s.ref] : undefined)])),
+    [songs, overlays],
+  );
   const selected = playlists.find(p => p.id === selectedId) ?? null;
 
   const playable = (s: { chords: string[] }) =>
@@ -216,8 +226,25 @@ export default function Playlists() {
         ))}
       </div>
 
+      {/* Only load the catalog (and re-resolve songs against it) when there ARE songs —
+          so opening an empty Songs page never triggers the catalog download. */}
+      {songs.length > 0 && <SongCatalogResync />}
+
       {pickerSong && <PlaylistPicker songId={pickerSong} onClose={() => setPickerSong(null)} />}
       {editingSong && <SongEditor songId={editingSong} onClose={() => setEditingSong(null)} />}
     </div>
   );
+}
+
+// Loads the catalog and, once ready, re-resolves saved songs by their stable ref to
+// refresh cached catalogId/tempo/chords (which go stale when a rebuild renumbers rows).
+// Rendered only when songs exist, so it never forces the catalog download otherwise.
+function SongCatalogResync() {
+  const { status } = useCatalog();
+  useEffect(() => {
+    if (status.phase !== 'ready') return;
+    migrateSongsToRefs();
+    resolveAndRefreshSongs().catch((err: unknown) => console.error('song resync failed:', err));
+  }, [status.phase]);
+  return null;
 }

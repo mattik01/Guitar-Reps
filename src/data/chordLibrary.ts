@@ -201,6 +201,22 @@ export function libraryPrimaryShape(chord: LibraryChord) {
   return chord.fingerings[0].shape;
 }
 
+// Turn a library chord into a fresh repertoire `Chord`, honoring the user's saved
+// fingering choice (clamped; falls back to the primary shape). Returns null for an
+// unknown id. Single source of truth for the "add a library chord" call sites, which
+// otherwise each re-spread the same fields — miss one and a chord loses its category
+// or difficulty. `learnedAt` is stamped at call time.
+export function materializeLibraryChord(id: string, fingeringIdx = 0): Chord | null {
+  const lib = libraryChordById(id);
+  if (!lib) return null;
+  const idx = Math.min(Math.max(fingeringIdx, 0), lib.fingerings.length - 1);
+  return {
+    id: lib.id, name: lib.name, shape: lib.fingerings[idx].shape,
+    category: lib.category, difficulty: lib.difficulty, importance: lib.importance,
+    info: lib.info, learnedAt: Date.now(), perfectReps: 0,
+  };
+}
+
 // ── Double-check: fail loudly if any fingering is inconsistent or mis-voiced ──
 // Runs once at module load. In dev this throws so a bad fingering can never reach
 // a learner; in production it logs (so the app still boots) but the error is visible.

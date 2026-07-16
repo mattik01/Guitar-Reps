@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ChordCategoryId } from '../data/chordCategories';
-import type { CatalogSong } from '../data/catalogDb';
+import { matchCatalogTracks, type CatalogSong } from '../data/catalogDb';
 import { deleteFile } from '../data/fileStore';
 // Value import from audio/chroma is safe: chroma.ts only imports TYPES from
 // this module, so there is no runtime cycle.
-import { CAL_MAX_SAMPLES, type CalSample } from '../audio/chroma';
+import { CAL_MAX_SAMPLES, CAL_SAMPLE_CAP, type CalSample } from '../audio/chroma';
 
 export type FingerMark = 1 | 2 | 3 | 4 | 'T' | null;
 
@@ -110,7 +110,11 @@ export function useLocalStore<T>(key: string, initial: T) {
   const set = useCallback((v: T | ((prev: T) => T)) => {
     setValue(prev => {
       const next = typeof v === 'function' ? (v as (p: T) => T)(prev) : v;
-      writeStorage(key, next);
+      // Persist + notify OTHER subscribers AFTER this render commits, not inside
+      // the updater: calling writeStorage here fans out setState to sibling
+      // components mid-render (React warns "cannot update a component while
+      // rendering a different component"). The local update stays synchronous.
+      Promise.resolve().then(() => writeStorage(key, next));
       return next;
     });
   }, [key]);
@@ -124,8 +128,17 @@ export type Attachment =
   | { kind: 'file'; fileId: string; name: string; mime: string; size: number }
   | { kind: 'link'; url: string; name?: string };
 
+// A `reps.songs` entry is NOT the source of truth for a song's content — the catalog
+// is (shared with Browse). This is the membership record + a cache of the last-resolved
+// catalog fields, kept fresh by resolveAndRefreshSongs() so `catalogId`/`tempo`/`chords`
+// survive catalog rebuilds (whose row ids are NOT stable). All *user* edits live in a
+// separate overlay (reps.songOverlays), keyed by `ref`, and are merged on top at display
+// time via mergeSong() — so a catalog refresh can never clobber them.
 export type Song = {
   id: string;
+  // Stable identity across catalog rebuilds: "sp:<spotifyId>" when known, else
+  // "ti:<title>|<artist>". The overlay key and the catalog-resolution key.
+  ref?: string;
   title: string;
   artist: string;
   chords: string[];
@@ -136,14 +149,21 @@ export type Song = {
   genre?: string;
   lang?: string;
   popularity?: number;
-  spotifyId?: string; // reserved for a future Spotify-linked catalog
-  catalogId?: number; // row id in the seed catalog, so the full progression can be fetched back
+  spotifyId?: string;
+  catalogId?: number; // CURRENT-build row id; refreshed live, never trusted long-term
   tempo?: number;     // BPM (audio feature), used to grade chord-transition speed targets
   source?: 'seed' | 'user';
-  // User attachments (found by the user themselves): a chord-sheet PDF and an mp3.
+  // Legacy inline attachments — migrated into the overlay by migrateSongsToRefs().
   sheet?: Attachment;
   audio?: Attachment;
 };
+
+// Build a song's stable ref. Prefer the immutable Spotify id; fall back to a
+// normalized title|artist so hand-typed / non-Spotify songs still get a stable key.
+export function songRefOf(x: { spotifyId?: string | null; title: string; artist: string }): string {
+  if (x.spotifyId) return `sp:${x.spotifyId}`;
+  return `ti:${x.title.trim().toLowerCase()}|${x.artist.trim().toLowerCase()}`;
+}
 
 export type Playlist = {
   id: string;
@@ -158,16 +178,19 @@ export type Playlist = {
 export const DEFAULT_PLAYLIST_ID = 'default';
 export const DEFAULT_PLAYLIST_NAME = 'Songs';
 
-// A user's edits to a *catalog* song, keyed by catalog song id (see useSongOverlays).
-// Stored separately so the read-only seed catalog is never mutated — re-downloading
-// or upgrading the catalog never clobbers these edits.
+// A user's edits to a song, keyed by its stable `ref` (see songRefOf). Held apart from
+// the catalog cache so a catalog refresh never clobbers them; merged over the catalog
+// data at display time by mergeSong(). Any field left undefined falls through to the
+// catalog value.
 export type SongOverlay = {
   title?: string;
   artist?: string;
   chords?: string[]; // corrected chord list (e.g. matched to a sheet the user found)
   url?: string;
   notes?: string;
-  saved?: boolean;   // user explicitly saved this catalog song into their collection
+  sheet?: Attachment; // user-attached chord-sheet PDF
+  audio?: Attachment; // user-attached mp3
+  saved?: boolean;   // reserved: user explicitly saved this catalog song into their collection
   updatedAt: number;
 };
 
@@ -180,7 +203,7 @@ export const useSwapRecords = () => useLocalStore<Record<string, SwapRecord>>('r
 export const useRoutineLog = () => useLocalStore<RoutineLog[]>('reps.routineLog', []);
 export const useSongs = () => useLocalStore<Song[]>('reps.songs', []);
 export const usePlaylists = () => useLocalStore<Playlist[]>('reps.playlists', []);
-// Per-catalog-song user edits, keyed by catalog song id. Never touches the seed DB.
+// Per-song user edits, keyed by the song's stable `ref` (songRefOf). Never touches the seed DB.
 export const useSongOverlays = () => useLocalStore<Record<string, SongOverlay>>('reps.songOverlays', {});
 export const useRoadmapProgress = () => useLocalStore<Record<string, RoadmapEntry>>('reps.roadmap', {});
 // Watched state for the JustinGuitar videos linked into the roadmap, keyed by
@@ -189,8 +212,19 @@ export const useWatchedVideos = () => useLocalStore<Record<string, boolean>>('re
 // Microphone-assisted detection (swap counter + quiz auto-reveal). Opt-in.
 // `calibrate`: collect per-chord calibration samples during exercises — the
 // user promises clean playing and a quiet room while it's on.
-export type MicSettings = { enabled: boolean; calibrate?: boolean };
-export const useMicSettings = () => useLocalStore<MicSettings>('reps.micSettings', { enabled: false, calibrate: false });
+// `debug`: surface the /mic-test diagnostics (live chroma, per-chord threshold
+// table, raw event log) inline in the exercises. Purely informational.
+// `activationThreshold`: Discord-style input-sensitivity gate on the same 0..1
+// log scale as ChordListener.getLevel(). A strum/knock quieter than this never
+// registers as an event. Default 0 = off (relies on the adaptive gate alone),
+// so the real-guitar-validated detection is unchanged until the user raises it.
+// `filters`: enable the Tier-1 DSP front-end (high-pass + low-pass) in the
+// ChordListener graph — kills rumble/handling/hiss, preserves pitched content.
+// Default off so the real-guitar-validated path is unchanged until opted in.
+// `filterHpHz` / `filterLpHz`: tunable cutoffs for the filter chain, so the
+// high-pass/low-pass can be dialed to the room + guitar (defaults 75 Hz / 7 kHz).
+export type MicSettings = { enabled: boolean; calibrate?: boolean; debug?: boolean; activationThreshold?: number; filters?: boolean; filterHpHz?: number; filterLpHz?: number };
+export const useMicSettings = () => useLocalStore<MicSettings>('reps.micSettings', { enabled: false, calibrate: false, debug: false, activationThreshold: 0, filters: false, filterHpHz: 75, filterLpHz: 7000 });
 // Per-chord mic auto-calibration: similarities of strums confirmed as correct
 // (quiz "✓ Got it" / swap confident classifications), each weighted by how
 // clean the strum was. Keyed by chord id; calibratedThresholds() in
@@ -217,6 +251,45 @@ export function clearMicCalibration(chordId: string) {
   writeStorage('reps.micCalibration', next);
 }
 
+// --- Deliberate per-chord calibration (Calibration Studio) ---
+// Replaces passive auto-calibration: samples are collected in a focused Studio
+// where you play the chord as cleanly as possible. Keyed by chord id (library +
+// repertoire share ONE id space, so a library chord calibrated here carries over
+// when added to the repertoire). The math (prototype chroma / thresholds / score)
+// lives in src/audio/calibration.ts. Coexists with the old micCalibration for now.
+export type CalibrationSample = {
+  chroma?: number[];   // 12-vec (unit norm) of the strum; absent for sim-only samples
+  sim: number;         // cosine similarity to the theoretical template at capture
+  weight: number;      // cleanliness quality weight, 0..1
+  source: 'single' | 'strum' | 'continuous' | 'legacy';
+  at: number;
+};
+export type CalibrationProfile = {
+  chordId: string;
+  samples: CalibrationSample[];
+  expectedPcs: number[]; // sounding pitch classes from the shape (future note-validator info)
+  updatedAt: number;
+};
+export const useChordProfiles = () => useLocalStore<Record<string, CalibrationProfile>>('reps.chordProfiles', {});
+
+// Append one Studio-collected sample (already quality-gated by the caller).
+export function recordChordSample(chordId: string, expectedPcs: number[], sample: CalibrationSample) {
+  const all = read<Record<string, CalibrationProfile>>('reps.chordProfiles', {});
+  const samples = [...(all[chordId]?.samples ?? []), sample].slice(-CAL_SAMPLE_CAP);
+  writeStorage('reps.chordProfiles', {
+    ...all,
+    [chordId]: { chordId, samples, expectedPcs, updatedAt: Date.now() },
+  });
+}
+// Drop a chord's whole profile (shape edited, or user reset in the Studio).
+export function clearChordProfile(chordId: string) {
+  const all = read<Record<string, CalibrationProfile>>('reps.chordProfiles', {});
+  if (!(chordId in all)) return;
+  const next = { ...all };
+  delete next[chordId];
+  writeStorage('reps.chordProfiles', next);
+}
+
 // Delete a song and every reference to it: removes it from reps.songs, strips its id
 // from all playlists, and deletes any uploaded attachment blobs. Keeps stores
 // consistent (no orphaned playlist ids or IndexedDB files). Uses writeStorage so all
@@ -235,9 +308,120 @@ export function deleteSongEverywhere(id: string) {
   });
   if (changed) writeStorage('reps.playlists', next);
 
-  for (const att of [song?.sheet, song?.audio]) {
+  // Drop the overlay and revoke any attachment blobs it (or the legacy song) held.
+  const ref = song?.ref;
+  const overlays = read<Record<string, SongOverlay>>('reps.songOverlays', {});
+  const ov = ref ? overlays[ref] : undefined;
+  for (const att of [song?.sheet, song?.audio, ov?.sheet, ov?.audio]) {
     if (att && att.kind === 'file') deleteFile(att.fileId).catch(() => {});
   }
+  if (ref && overlays[ref]) {
+    const nextOv = { ...overlays };
+    delete nextOv[ref];
+    writeStorage('reps.songOverlays', nextOv);
+  }
+}
+
+// Merge a song's overlay (user edits) over its catalog cache for display. Any overlay
+// field left undefined falls through to the cached catalog value.
+export function mergeSong(cache: Song, overlay?: SongOverlay): Song {
+  if (!overlay) return cache;
+  return {
+    ...cache,
+    title: overlay.title ?? cache.title,
+    artist: overlay.artist ?? cache.artist,
+    chords: overlay.chords ?? cache.chords,
+    url: overlay.url ?? cache.url,
+    notes: overlay.notes ?? cache.notes,
+    sheet: overlay.sheet ?? cache.sheet,
+    audio: overlay.audio ?? cache.audio,
+  };
+}
+
+// Write (merge) an overlay patch for a song ref. Non-hook so an editor can save-then-close
+// in one tick without the write being lost to an unmount.
+export function setSongOverlay(ref: string, patch: Partial<SongOverlay>) {
+  const all = read<Record<string, SongOverlay>>('reps.songOverlays', {});
+  writeStorage('reps.songOverlays', { ...all, [ref]: { ...(all[ref] ?? {}), ...patch, updatedAt: Date.now() } });
+}
+
+export function clearSongOverlay(ref: string) {
+  const all = read<Record<string, SongOverlay>>('reps.songOverlays', {});
+  if (!(ref in all)) return;
+  const next = { ...all };
+  delete next[ref];
+  writeStorage('reps.songOverlays', next);
+}
+
+// Overwrite the catalog-derived cache fields of saved songs from freshly-resolved
+// catalog rows (keyed by ref). This is what makes the Songs page share Browse's source
+// of truth: after a catalog rebuild the row ids move, so the stored catalogId/tempo go
+// stale — resolving live by the stable ref and refreshing here repairs them. User edits
+// live in the overlay and are untouched. No-op (no write) when nothing changed.
+export function refreshSongCache(byRef: Map<string, CatalogSong>) {
+  const songs = read<Song[]>('reps.songs', []);
+  let changed = false;
+  const next = songs.map(s => {
+    const cs = s.ref ? byRef.get(s.ref) : undefined;
+    if (!cs) return s;
+    const patched: Song = {
+      ...s,
+      title: cs.title,
+      artist: cs.artist,
+      chords: cs.chords,
+      genre: cs.genre ?? undefined,
+      popularity: cs.popularity ?? undefined,
+      spotifyId: cs.spotifyId ?? undefined,
+      catalogId: cs.id,
+      tempo: cs.tempo ?? undefined,
+    };
+    if (JSON.stringify(patched) !== JSON.stringify(s)) changed = true;
+    return patched;
+  });
+  if (changed) writeStorage('reps.songs', next);
+}
+
+// Resolve saved songs against the live catalog by their stable ref (spotify id, else
+// title|artist) and refresh the cache. Reads reps.songs itself (so it picks up refs
+// just stamped by migrateSongsToRefs). Call once the catalog worker is ready.
+export async function resolveAndRefreshSongs(): Promise<void> {
+  const withRef = read<Song[]>('reps.songs', []).filter(s => s.ref);
+  if (withRef.length === 0) return;
+  const keyOf = (s: Song) => `${s.title}|${s.artist}`.toLowerCase();
+  const { byId, byKey } = await matchCatalogTracks(
+    withRef.map(s => ({ id: s.spotifyId ?? null, key: keyOf(s) })),
+  );
+  const byRef = new Map<string, CatalogSong>();
+  for (const s of withRef) {
+    const cs = (s.spotifyId && byId.get(s.spotifyId)) || byKey.get(keyOf(s));
+    if (cs && s.ref) byRef.set(s.ref, cs);
+  }
+  refreshSongCache(byRef);
+}
+
+// One-time migration to the ref + overlay model: stamp each saved song with its stable
+// ref and move inline user data (link, notes, attachments) into the overlay so future
+// catalog refreshes never overwrite it. Idempotent via a stored flag.
+export function migrateSongsToRefs() {
+  if (read<boolean>('reps.songsRefMigrated', false)) return;
+  const songs = read<Song[]>('reps.songs', []);
+  const overlays = read<Record<string, SongOverlay>>('reps.songOverlays', {});
+  const nextOv: Record<string, SongOverlay> = { ...overlays };
+  const nextSongs = songs.map(s => {
+    const ref = s.ref ?? songRefOf(s);
+    const cur = nextOv[ref] ?? { updatedAt: Date.now() };
+    let touched = false;
+    // Only seed fields the overlay doesn't already define.
+    if (s.url && cur.url == null) { cur.url = s.url; touched = true; }
+    if (s.notes && cur.notes == null) { cur.notes = s.notes; touched = true; }
+    if (s.sheet && cur.sheet == null) { cur.sheet = s.sheet; touched = true; }
+    if (s.audio && cur.audio == null) { cur.audio = s.audio; touched = true; }
+    if (touched) nextOv[ref] = cur;
+    return { ...s, ref, url: undefined, notes: undefined, sheet: undefined, audio: undefined };
+  });
+  writeStorage('reps.songOverlays', nextOv);
+  writeStorage('reps.songs', nextSongs);
+  writeStorage('reps.songsRefMigrated', true);
 }
 
 // Persist edits to a materialized song. Non-hook (writeStorage notifies subscribers)
@@ -274,6 +458,7 @@ export function saveCatalogSong(cs: CatalogSong): string {
   const id = `song-${Date.now().toString(36)}-${cs.id}`;
   writeStorage('reps.songs', [...songs, {
     id,
+    ref: songRefOf(cs),
     title: cs.title,
     artist: cs.artist,
     chords: cs.chords,

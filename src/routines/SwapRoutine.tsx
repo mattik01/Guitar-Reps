@@ -1,25 +1,37 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ChordDiagram } from '../components/ChordDiagram';
+import { ChordEditor } from '../components/ChordEditor';
 import { CleanlinessBadge } from '../components/CleanlinessBadge';
+import { libraryChordById, materializeLibraryChord } from '../data/chordLibrary';
+import type { ChordCategoryId } from '../data/chordCategories';
+import { MicDiagnostics, strumLogDetail, type MicLogEntry } from '../components/MicDiagnostics';
 import { MicMeter } from '../components/MicMeter';
+import { MicInputTuning } from '../components/MicInputTuning';
+import { MicSettingsToggles } from '../components/MicSettingsToggles';
 import { Timer, type TimerHandle } from '../components/Timer';
 import { useChordListener } from '../audio/useChordListener';
 import type { StrumEvent } from '../audio/chordListener';
 import { calSampleWeight, typicalSimilarity, type Cleanliness } from '../audio/chroma';
-import { pairKey, recordCalibrationSample, useMicCalibration, useMicSettings, useRepertoire, useRoutineLog, useSwapRecords, type Chord, type SwapRecord } from '../state/store';
+import { pairKey, recordCalibrationSample, useMicCalibration, useMicSettings, useRepertoire, useRoutineLog, useSwapRecords, type Chord, type ChordShape, type SwapRecord } from '../state/store';
 
 type Phase = 'picking' | 'ready' | 'running' | 'entering' | 'finished';
 
 const MAX_HISTORY = 20;
 
 export default function SwapRoutine() {
-  const [repertoire] = useRepertoire();
+  const [repertoire, setRepertoire] = useRepertoire();
   const [swaps, setSwaps] = useSwapRecords();
   const [, setLog] = useRoutineLog();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deeplinkConsumed = useRef(false);
 
   const [pair, setPair] = useState<[Chord, Chord] | null>(null);
   const [phase, setPhase] = useState<Phase>('picking');
+  // Deep-linked pair whose chords aren't all in the repertoire yet: `pendingPair`
+  // holds the target ids, `registerId` the one currently being registered.
+  const [pendingPair, setPendingPair] = useState<[string, string] | null>(null);
+  const [registerId, setRegisterId] = useState<string | null>(null);
   // Fixed 60s window so a logged count is directly "swaps per minute" — the unit the
   // per-song transition colouring compares against (½ the song's BPM). Not adjustable.
   const seconds = 60;
@@ -46,6 +58,25 @@ export default function SwapRoutine() {
   const [hearing, setHearing] = useState<string | null>(null);
   const [lastClean, setLastClean] = useState<Cleanliness | null>(null);
   const [micCounted, setMicCounted] = useState<number | null>(null);
+  const [debugLog, setDebugLog] = useState<MicLogEntry[]>([]);
+
+  const chordNames = useMemo(() => new Map(repertoire.map(c => [c.id, c.name])), [repertoire]);
+  const owned = useMemo(() => new Set(repertoire.map(c => c.id)), [repertoire]);
+
+  // Add/remove a pair chord from the repertoire in place. Re-adds the exact Chord
+  // we already hold (shape, category, reps preserved) rather than re-materializing,
+  // so removing then re-adding mid-round is lossless.
+  function toggleRepertoire(chord: Chord) {
+    setRepertoire(prev =>
+      prev.some(c => c.id === chord.id)
+        ? prev.filter(c => c.id !== chord.id)
+        : [...prev, chord]
+    );
+  }
+
+  function pushDebug(entry: MicLogEntry) {
+    setDebugLog(prev => [entry, ...prev].slice(0, 80));
+  }
 
   const key = pair ? pairKey(pair[0].id, pair[1].id) : null;
   const record = key ? swaps[key] : null;
@@ -76,6 +107,7 @@ export default function SwapRoutine() {
   // IDENTICAL consecutive strums (double-strums of the same chord). Anything
   // unsure is assumed to be the alternation the exercise asks for.
   function handleStrum(e: StrumEvent) {
+    if (micSettings.debug) pushDebug({ at: e.at, kind: 'strum', detail: strumLogDetail(e) });
     const name = e.best ? pair?.find(c => c.id === e.best)?.name ?? null : null;
     setHearing(name);
     setLastClean(e.cleanliness); // live feedback in ready AND running — never gates
@@ -101,7 +133,17 @@ export default function SwapRoutine() {
     setLiveSwaps(detectedSwapsRef.current);
   }
 
-  const mic = useChordListener({ enabled: micActive, targets: micTargets, onStrum: handleStrum });
+  const mic = useChordListener({
+    enabled: micActive,
+    targets: micTargets,
+    activationThreshold: micSettings.activationThreshold,
+    filters: micSettings.filters,
+    filterHpHz: micSettings.filterHpHz,
+    filterLpHz: micSettings.filterLpHz,
+    onStrum: handleStrum,
+    onKnock: e => { if (micSettings.debug) pushDebug({ at: e.at, kind: 'knock', detail: 'percussive onset' }); },
+    onDoubleKnock: e => { if (micSettings.debug) pushDebug({ at: e.at, kind: 'double-knock', detail: '🥁 double knock' }); },
+  });
 
   useEffect(() => {
     return () => {
@@ -115,6 +157,72 @@ export default function SwapRoutine() {
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [phase]);
+
+  // Resolve a chord id to a full Chord: a repertoire chord if owned, else a library
+  // chord materialized as a not-yet-owned preview (the ready screen's per-chord toggle
+  // lets you add it any time). null when the id is neither owned nor in the library.
+  function resolveChord(id: string): Chord | null {
+    return repertoire.find(c => c.id === id) ?? materializeLibraryChord(id);
+  }
+
+  // Deep link from a song's chord-change strip: ?a=<id>&b=<id> pre-loads that pair
+  // and drops straight to the 'ready' screen. Consumed once, then the params are
+  // cleared so navigating back inside the routine doesn't re-trigger it.
+  useEffect(() => {
+    if (deeplinkConsumed.current) return;
+    const aId = searchParams.get('a');
+    const bId = searchParams.get('b');
+    if (!aId || !bId) return;
+    deeplinkConsumed.current = true;
+    setSearchParams({}, { replace: true });
+    if (aId === bId) return;
+    const a = resolveChord(aId);
+    const b = resolveChord(bId);
+    if (a && b) { setPair([a, b]); setPhase('ready'); resetRoundState(); return; }
+    setPendingPair([aId, bId]); // a chord is neither owned nor in the library → register it first
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  // Drive a deep-linked pair whose chord(s) aren't even in the library: register each
+  // by hand in turn, then open the pair (library chords resolve straight to previews).
+  useEffect(() => {
+    if (!pendingPair) return;
+    const [aId, bId] = pendingPair;
+    const needsRegister = [aId, bId].find(id => !repertoire.some(c => c.id === id) && !libraryChordById(id));
+    if (needsRegister) {
+      if (registerId == null) setRegisterId(needsRegister);
+      return;
+    }
+    const a = resolveChord(aId);
+    const b = resolveChord(bId);
+    if (a && b) {
+      setPendingPair(null);
+      setRegisterId(null);
+      setPair([a, b]);
+      setPhase('ready');
+      resetRoundState();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repertoire, pendingPair]);
+
+  // Save a manually-registered chord to the repertoire; the effect above then
+  // advances to the next missing chord or opens the pair. Library ids prefill shape/category.
+  function registerChord(value: { name: string; shape: ChordShape; category?: ChordCategoryId }) {
+    if (!registerId) return;
+    const lib = libraryChordById(registerId);
+    const chord: Chord = {
+      id: registerId, name: value.name, shape: value.shape,
+      category: value.category, difficulty: lib?.difficulty, importance: lib?.importance, info: lib?.info,
+      learnedAt: Date.now(), perfectReps: 0,
+    };
+    setRepertoire(prev => prev.some(c => c.id === chord.id) ? prev : [...prev, chord]);
+    setRegisterId(null);
+  }
+
+  function cancelRegister() {
+    setRegisterId(null);
+    setPendingPair(null);
+  }
 
   function pickRandom() {
     if (notEnough) return;
@@ -149,6 +257,7 @@ export default function SwapRoutine() {
     setLiveSwaps(0);
     setHearing(null);
     setLastClean(null);
+    setDebugLog([]);
   }
 
   function start() {
@@ -249,7 +358,39 @@ export default function SwapRoutine() {
     resetRoundState();
   }
 
-  if (notEnough) {
+  // A deep-linked pair includes a chord not yet in the repertoire — register it first.
+  if (registerId) {
+    const lib = libraryChordById(registerId);
+    const [aId, bId] = pendingPair ?? [registerId, registerId];
+    return (
+      <div>
+        <div className="row">
+          <Link to="/" className="button">← Home</Link>
+          <h1 style={{ margin: 0 }}>Chord swap routine</h1>
+        </div>
+        <div className="card">
+          <p style={{ margin: 0 }}>
+            To train the <strong>{aId} ↔ {bId}</strong> swap, <strong>{registerId}</strong> needs to be
+            in your repertoire. Register it — draw the shape and pick a category — to continue.
+          </p>
+        </div>
+        <ChordEditor
+          title={`Register ${registerId}`}
+          initialName={registerId}
+          initialShape={lib?.fingerings[0]?.shape}
+          withCategory
+          initialCategory={lib?.category ?? 'other'}
+          saveLabel="Save & continue"
+          onSave={registerChord}
+          onCancel={cancelRegister}
+        />
+      </div>
+    );
+  }
+
+  // A deep-linked pair (possibly with library previews) is loading — show it, not the
+  // "need 2 chords" gate, even if the repertoire itself has fewer than two owned chords.
+  if (notEnough && !pair && !pendingPair) {
     return (
       <div>
         <div className="row">
@@ -264,7 +405,7 @@ export default function SwapRoutine() {
     );
   }
 
-  if (phase === 'picking' || !pair) {
+  if ((phase === 'picking' || !pair) && !pendingPair) {
     return (
       <div>
         <div className="row">
@@ -277,16 +418,8 @@ export default function SwapRoutine() {
           <div className="row">
             <button className="button primary big" onClick={pickRandom}>🎲 Random pair</button>
             <span className="muted" style={{ fontWeight: 700 }}>60s per round</span>
-            <label className="toggle">
-              <input type="checkbox" checked={micSettings.enabled}
-                onChange={e => setMicSettings(prev => ({ ...prev, enabled: e.target.checked }))} />
-              🎙 Count with microphone
-            </label>
-            <label className="toggle" title="Learn per-chord similarity levels from confidently-classified strums">
-              <input type="checkbox" checked={!!micSettings.calibrate} disabled={!micSettings.enabled}
-                onChange={e => setMicSettings(prev => ({ ...prev, calibrate: e.target.checked }))} />
-              🎯 Auto-calibrate
-            </label>
+            <MicSettingsToggles micSettings={micSettings} setMicSettings={setMicSettings}
+              micLabel="🎙 Count with microphone" />
           </div>
           <hr style={{ border: 0, borderTop: '1px solid var(--line)', margin: '16px 0' }} />
           <ManualPicker repertoire={repertoire} swaps={swaps} onPick={pickManual} />
@@ -296,6 +429,8 @@ export default function SwapRoutine() {
       </div>
     );
   }
+
+  if (!pair) return null; // transient: a pending deep-linked pair is still resolving
 
   const [a, b] = pair;
 
@@ -314,10 +449,12 @@ export default function SwapRoutine() {
         <div className="card" style={{ alignItems: 'center', display: 'flex', flexDirection: 'column' }}>
           <div style={{ fontWeight: 700, fontSize: 20 }}>{a.name}</div>
           <ChordDiagram shape={a.shape} size={200} />
+          <RepertoireToggle chord={a} owned={owned.has(a.id)} onToggle={toggleRepertoire} />
         </div>
         <div className="card" style={{ alignItems: 'center', display: 'flex', flexDirection: 'column' }}>
           <div style={{ fontWeight: 700, fontSize: 20 }}>{b.name}</div>
           <ChordDiagram shape={b.shape} size={200} />
+          <RepertoireToggle chord={b} owned={owned.has(b.id)} onToggle={toggleRepertoire} />
         </div>
       </div>
 
@@ -332,6 +469,11 @@ export default function SwapRoutine() {
             )}
             {phase === 'ready' && <CleanlinessBadge clean={lastClean} />}
           </div>
+          {phase === 'ready' && mic.state === 'listening' && (
+            <div style={{ maxWidth: 460, margin: '8px auto 0' }}>
+              <MicInputTuning getLevel={mic.getLevel} state={mic.state} compact />
+            </div>
+          )}
           {micSettings.calibrate && mic.state === 'listening' && (
             <div className="muted" style={{ textAlign: 'center', marginTop: 4 }}>
               🎯 Auto-calibration is on — play as cleanly as you can, in a quiet room.
@@ -428,6 +570,27 @@ export default function SwapRoutine() {
           </div>
         </>
       )}
+
+      {micSettings.enabled && micSettings.debug && (
+        <MicDiagnostics getLiveChroma={mic.getLiveChroma} getLevel={mic.getLevel} state={mic.state} targets={micTargets} log={debugLog} names={chordNames} />
+      )}
+    </div>
+  );
+}
+
+function RepertoireToggle({ chord, owned, onToggle }: {
+  chord: Chord;
+  owned: boolean;
+  onToggle: (c: Chord) => void;
+}) {
+  return (
+    <div className="row" style={{ justifyContent: 'center', gap: 8, marginTop: 10 }}>
+      <span style={{ color: owned ? 'var(--good)' : 'var(--warn)', fontWeight: 700 }}>
+        {owned ? '✓ in repertoire' : '✗ not in repertoire'}
+      </span>
+      <button className="button" onClick={() => onToggle(chord)}>
+        {owned ? '− Remove' : '+ Add'}
+      </button>
     </div>
   );
 }

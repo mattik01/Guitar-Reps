@@ -119,6 +119,7 @@ type SearchOpts = {
   known?: string[];              // repertoire chords normalized at `level`
   level?: 'exact' | 'medium' | 'base';
   onlyPlayable?: boolean;
+  excludeChords?: string[];      // chords (normalized at `level`) whose songs to hide
   tempoMin?: number;
   tempoMax?: number;
   key?: number;                  // 0..11 pitch class
@@ -128,7 +129,15 @@ type SearchOpts = {
   offset?: number;
 };
 
-function searchSongs(o: SearchOpts): { rows: Row[]; hasMore: boolean } {
+// Which normalized song_chords column a match level compares against.
+function chordCol(level?: string): string {
+  return level === 'exact' ? 'chord_exact' : level === 'medium' ? 'chord_medium' : 'chord_base';
+}
+
+// Build the shared WHERE/bind for every non-chord-toggle filter (text, genre,
+// audio features, "only playable"). Used by both searchSongs and availableChords
+// so the toggle list stays in sync with the songs the other filters allow.
+function baseFilters(o: SearchOpts): { where: string[]; bind: unknown[]; ftsJoin: string } {
   const where: string[] = [];
   const bind: unknown[] = [];
   let ftsJoin = '';
@@ -151,12 +160,45 @@ function searchSongs(o: SearchOpts): { rows: Row[]; hasMore: boolean } {
   if (typeof o.mode === 'number') { where.push('s.song_mode = ?'); bind.push(o.mode); }
 
   if (o.onlyPlayable) {
-    const col = o.level === 'exact' ? 'chord_exact' : o.level === 'medium' ? 'chord_medium' : 'chord_base';
+    const col = chordCol(o.level);
     where.push(`NOT EXISTS (
       SELECT 1 FROM song_chords sc
       WHERE sc.song_id = s.id AND sc.${col} NOT IN (SELECT value FROM json_each(?))
     )`);
     bind.push(JSON.stringify(o.known ?? []));
+  }
+  return { where, bind, ftsJoin };
+}
+
+// Distinct chords (at the active level) across every song the non-chord filters
+// allow, most common first — the toggle list backing the Browse chord filter.
+const CHORD_LIMIT = 120;
+function availableChords(o: SearchOpts): { rows: Row[] } {
+  const { where, bind, ftsJoin } = baseFilters(o);
+  const col = chordCol(o.level);
+  const sql = `SELECT xc.${col} AS chord, COUNT(*) AS n
+    FROM songs s
+    ${ftsJoin}
+    JOIN song_chords xc ON xc.song_id = s.id
+    ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+    GROUP BY xc.${col}
+    ORDER BY n DESC, chord ASC
+    LIMIT ?`;
+  bind.push(CHORD_LIMIT);
+  return { rows: rows(sql, bind) };
+}
+
+function searchSongs(o: SearchOpts): { rows: Row[]; hasMore: boolean } {
+  const { where, bind, ftsJoin } = baseFilters(o);
+
+  if (o.excludeChords && o.excludeChords.length) {
+    // Hide any song that uses one of the toggled-off chords.
+    const col = chordCol(o.level);
+    where.push(`NOT EXISTS (
+      SELECT 1 FROM song_chords sc
+      WHERE sc.song_id = s.id AND sc.${col} IN (SELECT value FROM json_each(?))
+    )`);
+    bind.push(JSON.stringify(o.excludeChords));
   }
 
   const order = o.sort === 'title' ? 's.title COLLATE NOCASE ASC'
@@ -228,6 +270,7 @@ self.onmessage = async (e: MessageEvent) => {
     switch (type) {
       case 'init': result = meta(); break;
       case 'search': result = searchSongs(payload as SearchOpts); break;
+      case 'chords': result = availableChords(payload as SearchOpts); break;
       case 'progression': result = getProgression((payload as { id: number }).id); break;
       case 'getSong': result = getSongById((payload as { id: number }).id); break;
       case 'matchTracks': result = matchTracks(payload as { tracks: { id: string | null; key: string }[] }); break;

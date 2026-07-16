@@ -11,7 +11,8 @@ export type ChordCategoryId =
   | 'sevenths-movable'
   | 'extended'
   | 'altered-dominant'
-  | 'advanced-voicings';
+  | 'advanced-voicings'
+  | 'other';
 
 export type ChordCategory = {
   id: ChordCategoryId;
@@ -74,6 +75,12 @@ export const CHORD_CATEGORIES: ChordCategory[] = [
     name: 'Advanced Voicings — quartal, drop-2, 11 & 13',
     description: 'The advanced toolkit: fourth (quartal) chords, drop-2 voicings, upper extensions (11, 13) and melodic-minor colors.',
     roadmapLevel: 'L8',
+  },
+  {
+    id: 'other',
+    name: 'Other',
+    description: 'Catch-all for chords you registered yourself — custom voicings, exotic shapes, or song-specific chords that don’t fit a standard category.',
+    roadmapLevel: '—',
   },
 ];
 

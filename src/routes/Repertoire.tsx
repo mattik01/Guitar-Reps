@@ -4,9 +4,9 @@ import { ChordCard } from '../components/ChordCard';
 import { ChordDiagram } from '../components/ChordDiagram';
 import { ChordEditor } from '../components/ChordEditor';
 import { LibraryChordGrid } from '../components/LibraryChordGrid';
-import { CHORD_LIBRARY } from '../data/chordLibrary';
+import { CHORD_LIBRARY, materializeLibraryChord } from '../data/chordLibrary';
 import { Sparkline } from '../routines/SwapRoutine';
-import { useFingeringChoice, useRepertoire, useSwapRecords, type Chord, type ChordShape, type SwapRecord } from '../state/store';
+import { useFingeringChoice, useRepertoire, useSwapRecords, type ChordShape, type SwapRecord } from '../state/store';
 
 export default function Repertoire() {
   const [repertoire, setRepertoire] = useRepertoire();
@@ -26,14 +26,8 @@ export default function Repertoire() {
   const names = useMemo(() => new Map(repertoire.map(c => [c.id, c.name])), [repertoire]);
 
   function addChord(id: string) {
-    const lib = CHORD_LIBRARY.find(c => c.id === id);
-    if (!lib) return;
-    const idx = Math.min(Math.max(fingeringChoice[id] ?? 0, 0), lib.fingerings.length - 1);
-    const chord: Chord = {
-      id: lib.id, name: lib.name, shape: lib.fingerings[idx].shape,
-      category: lib.category, difficulty: lib.difficulty, importance: lib.importance,
-      info: lib.info, learnedAt: Date.now(), perfectReps: 0,
-    };
+    const chord = materializeLibraryChord(id, fingeringChoice[id] ?? 0);
+    if (!chord) return;
     setRepertoire(prev => [...prev, chord]);
     setPicking(false);
   }

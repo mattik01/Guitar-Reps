@@ -12,6 +12,8 @@ import NewChordRoutine from './routines/NewChordRoutine';
 import SwapRoutine from './routines/SwapRoutine';
 import StrumRoutine from './routines/StrumRoutine';
 import MicTest from './routes/MicTest';
+import CalibrationIndex from './routes/CalibrationIndex';
+import CalibrationStudio from './routes/CalibrationStudio';
 
 export default function App() {
   return (
@@ -25,6 +27,7 @@ export default function App() {
         <NavLink to="/songs">Songs</NavLink>
         <NavLink to="/browse">Browse</NavLink>
         <NavLink to="/progress">Progress</NavLink>
+        <NavLink to="/calibrate">Calibrate</NavLink>
       </nav>
       <main className="main">
         <Routes>
@@ -43,6 +46,8 @@ export default function App() {
           <Route path="/routine/swap" element={<SwapRoutine />} />
           <Route path="/routine/strum" element={<StrumRoutine />} />
           <Route path="/mic-test" element={<MicTest />} />{/* debug/calibration, URL-only */}
+          <Route path="/calibrate" element={<CalibrationIndex />} />
+          <Route path="/calibrate/:chordId" element={<CalibrationStudio />} />
         </Routes>
       </main>
     </div>

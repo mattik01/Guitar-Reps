@@ -24,6 +24,7 @@ export type SearchOpts = {
   known?: string[];
   level?: MatchLevel;
   onlyPlayable?: boolean;
+  excludeChords?: string[];
   tempoMin?: number;
   tempoMax?: number;
   key?: number;
@@ -113,6 +114,15 @@ export async function searchCatalog(opts: SearchOpts): Promise<{ songs: CatalogS
   return { songs: (rows as any[]).map(toSong), hasMore };
 }
 
+export type ChordCount = { chord: string; n: number };
+
+/** Distinct chords (at opts.level) across the songs the given filters allow,
+ *  most common first — powers the Browse chord toggle filter. */
+export async function availableChords(opts: SearchOpts): Promise<ChordCount[]> {
+  const { rows } = await call<{ rows: any[] }>('chords', opts);
+  return rows.map(r => ({ chord: String(r.chord), n: (r.n as number) ?? 0 }));
+}
+
 /**
  * Match Spotify playlist tracks against the catalog. `byId` is keyed by
  * spotify_id, `byKey` by lowercased "title|artist" (fallback for tracks whose
@@ -161,5 +171,6 @@ export function useCatalog() {
   }, []);
 
   const search = useCallback((opts: SearchOpts) => searchCatalog(opts), []);
-  return { status, search };
+  const chords = useCallback((opts: SearchOpts) => availableChords(opts), []);
+  return { status, search, chords };
 }

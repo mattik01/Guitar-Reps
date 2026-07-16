@@ -19,7 +19,7 @@ import Database from 'better-sqlite3';
 import { parseChord } from '../src/data/chordNormalize';
 import { chordonomiconToStandard, isStructuralTag } from '../src/data/chordonomicon';
 
-const CATALOG_VERSION = 5; // v5: dataset-sourced names + full audio features + metadata.
+const CATALOG_VERSION = 6; // v6: stable content-hash row ids (survive rebuilds); v5 = dataset names + audio features + metadata.
 const ROOT = process.cwd();
 const RAW_DIR = path.join(ROOT, 'data', 'raw');
 const OUT_DIR = path.join(ROOT, 'public');
@@ -181,14 +181,26 @@ function makeInserter(db: Database.Database) {
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   const insChord = db.prepare(
     `INSERT INTO song_chords (song_id,chord_exact,chord_medium,chord_base) VALUES (?,?,?,?)`);
-  let id = 0;
   const seen = new Set<string>();
+  // Stable row id derived from an immutable key (Spotify id, else normalized
+  // artist+title) instead of a bare insertion counter. This keeps a song's id the SAME
+  // across rebuilds, so anything that stored a catalogId (or resolves by it) stays
+  // valid when the catalog is regenerated. Collisions are resolved by linear probing.
+  const usedIds = new Set<number>();
+  function stableId(rawKey: string): number {
+    let h = 2166136261; // FNV-1a, 32-bit
+    for (let i = 0; i < rawKey.length; i++) { h ^= rawKey.charCodeAt(i); h = Math.imul(h, 16777619); }
+    let n = (h & 0x7fffffff) || 1; // positive 31-bit, never 0 (0 is a valid but avoidable rowid)
+    while (usedIds.has(n)) n = (n % 0x7fffffff) + 1;
+    usedIds.add(n);
+    return n;
+  }
   function add(r: SongRec): boolean {
     if (!r.title || r.chordTokens.length === 0) return false;
     const key = normArtistTitle(r.artist, r.title);
     if (seen.has(key)) return false;
     seen.add(key);
-    id++;
+    const id = stableId(r.spotifyId ? `sp:${r.spotifyId}` : `ti:${key}`);
     insSong.run(id, r.title, r.artist, r.genre, r.lang, r.popularity, r.spotifyId, r.decade,
       JSON.stringify(r.chordTokens),
       r.progression ?? null, r.releaseDate ?? null, r.genres ?? null,
@@ -209,7 +221,7 @@ function makeInserter(db: Database.Database) {
     }
     return true;
   }
-  return { add, count: () => id };
+  return { add, count: () => usedIds.size };
 }
 
 function finish(db: Database.Database, dbPath: string, songs: number) {

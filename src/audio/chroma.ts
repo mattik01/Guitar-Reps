@@ -146,7 +146,10 @@ export function verdictForSimilarity(
 // chord's thresholds come from its own distribution instead of the globals.
 
 export const CAL_MIN_SAMPLES = 3;
-export const CAL_MAX_SAMPLES = 20; // keep only the most recent N per chord
+export const CAL_MAX_SAMPLES = 20; // (legacy auto-calibration) keep only the most recent N
+// Studio profiles keep EVERY clean sample (nothing discarded) and derive clusters
+// from the full set — this is only a high safety bound against pathological growth.
+export const CAL_SAMPLE_CAP = 500;
 // Match threshold sits just under the 25th percentile of confirmed sims: most
 // correct strums pass, and a few weak/misrecorded samples can't drag it down.
 export const CAL_QUANTILE = 0.25;

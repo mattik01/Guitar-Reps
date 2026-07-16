@@ -1,17 +1,27 @@
-// Modal editor for a materialized song (reps.songs). Opened by the pen button on
-// both Browse and the Songs (playlists) page. Lets the user fix title/artist/chords,
-// add a link/notes, and attach a chord-sheet PDF + mp3. Songs that came from the seed
-// catalog can be reset with "Restore original".
-import { useState } from 'react';
-import { useSongs, useRepertoire, deleteSongEverywhere, updateSong, type Song } from '../state/store';
-import { getCatalogSongById } from '../data/catalogDb';
+// Modal editor for a saved song. Opened by the pen button on both Browse and the Songs
+// (playlists) page. The catalog is the song's source of truth; every edit here is stored
+// as a per-song *overlay* (keyed by the song's stable ref) that's merged over the catalog
+// data for display — so a catalog refresh never clobbers it. "Restore original" simply
+// drops the overlay, reverting to the catalog values.
+import { useMemo, useState } from 'react';
+import {
+  useSongs, useSongOverlays, useRepertoire, deleteSongEverywhere, setSongOverlay,
+  mergeSong, songRefOf, type Song,
+} from '../state/store';
 import { catalogIdOf } from '../data/songTransitions';
 import { AttachmentField, resolveAttachment, type AttachmentDraft } from './AttachmentField';
 
 export function SongEditor({ songId, onClose }: { songId: string; onClose: () => void }) {
   const [songs] = useSongs();
+  const [overlays] = useSongOverlays();
   const [repertoire] = useRepertoire();
-  const song = songs.find(s => s.id === songId);
+  const cache = songs.find(s => s.id === songId);
+  const ref = cache ? (cache.ref ?? songRefOf(cache)) : null;
+  // Edit against the merged (catalog ⊕ overlay) view.
+  const song = useMemo<Song | null>(
+    () => (cache ? mergeSong(cache, ref ? overlays[ref] : undefined) : null),
+    [cache, overlays, ref],
+  );
 
   const [title, setTitle] = useState(song?.title ?? '');
   const [artist, setArtist] = useState(song?.artist ?? '');
@@ -22,10 +32,9 @@ export function SongEditor({ songId, onClose }: { songId: string; onClose: () =>
   const [sheetDraft, setSheetDraft] = useState<AttachmentDraft>({ type: 'keep' });
   const [audioDraft, setAudioDraft] = useState<AttachmentDraft>({ type: 'keep' });
   const [saving, setSaving] = useState(false);
-  const [restoring, setRestoring] = useState(false);
 
-  if (!song) return null;
-  const catalogId = catalogIdOf(song);
+  if (!song || !cache || !ref) return null;
+  const catalogId = catalogIdOf(cache);
 
   function addChord(raw: string) {
     const v = raw.trim();
@@ -42,39 +51,33 @@ export function SongEditor({ songId, onClose }: { songId: string; onClose: () =>
     setChords(next);
   }
 
-  async function restoreOriginal() {
-    if (catalogId == null || restoring) return;
-    setRestoring(true);
-    try {
-      const orig = await getCatalogSongById(catalogId);
-      if (orig) {
-        setTitle(orig.title);
-        setArtist(orig.artist);
-        setChords(orig.chords);
-      }
-    } finally {
-      setRestoring(false);
-    }
+  // Reset the catalog-derived fields (title/artist/chords) to the catalog's current
+  // values, leaving the user's link/notes/attachments alone.
+  function restoreOriginal() {
+    setTitle(cache!.title);
+    setArtist(cache!.artist);
+    setChords(cache!.chords);
   }
 
   async function submit() {
     const trimmed = title.trim();
-    if (!trimmed || !song || saving) return;
+    if (!trimmed || saving) return;
     setSaving(true);
     try {
-      const sheet = await resolveAttachment(sheetDraft, song.sheet);
-      const audio = await resolveAttachment(audioDraft, song.audio);
-      const updated: Song = {
-        ...song,
-        title: trimmed,
-        artist: artist.trim(),
-        chords,
+      const sheet = await resolveAttachment(sheetDraft, song!.sheet);
+      const audio = await resolveAttachment(audioDraft, song!.audio);
+      // Only pin fields that DIFFER from the catalog cache — equal values stay
+      // undefined so they keep tracking the catalog (its source of truth).
+      const sameChords = JSON.stringify(chords) === JSON.stringify(cache!.chords);
+      setSongOverlay(ref!, {
+        title: trimmed !== cache!.title ? trimmed : undefined,
+        artist: artist.trim() !== cache!.artist ? artist.trim() : undefined,
+        chords: sameChords ? undefined : chords,
         url: url.trim() || undefined,
         notes: notes.trim() || undefined,
         sheet,
         audio,
-      };
-      updateSong(updated);
+      });
       onClose();
     } finally {
       setSaving(false);
@@ -82,9 +85,8 @@ export function SongEditor({ songId, onClose }: { songId: string; onClose: () =>
   }
 
   function remove() {
-    if (!song) return;
     if (!confirm('Delete this song? This removes it from all playlists and deletes any uploaded files.')) return;
-    deleteSongEverywhere(song.id);
+    deleteSongEverywhere(cache!.id);
     onClose();
   }
 
@@ -98,9 +100,9 @@ export function SongEditor({ songId, onClose }: { songId: string; onClose: () =>
           <h2 style={{ marginTop: 0 }}>Edit {song.title}</h2>
           <div className="spacer" />
           {catalogId != null && (
-            <button className="button" onClick={restoreOriginal} disabled={restoring}
+            <button className="button" onClick={restoreOriginal}
               title="Reset title, artist and chords to the catalog's original values">
-              {restoring ? 'Restoring…' : '↺ Restore original'}
+              ↺ Restore original
             </button>
           )}
           <button className="button" onClick={onClose}>Close</button>

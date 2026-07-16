@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useCatalog, getProgression, type CatalogSong } from '../data/catalogDb';
-import { useRepertoire, useSongs, ensureInDefaultPlaylist, saveCatalogSong } from '../state/store';
+import { useCatalog, getProgression, type CatalogSong, type ChordCount } from '../data/catalogDb';
+import { useRepertoire, useSongs, ensureInDefaultPlaylist, saveCatalogSong, resolveAndRefreshSongs, migrateSongsToRefs } from '../state/store';
 import { knownSetAtLevel, isKnown, type MatchLevel } from '../data/chordNormalize';
 import { parseProgression, type ProgressionSection } from '../data/chordonomicon';
 import { PlaylistPicker } from '../components/PlaylistPicker';
 import { AlbumArt } from '../components/AlbumArt';
-import { SongTransitions } from '../components/SongTransitions';
+import { SongCardShell } from '../components/SongCard';
 import { SongEditor } from '../components/SongEditor';
 
 const KEY_NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
@@ -18,7 +18,7 @@ function tempoKey(s: CatalogSong): string {
 }
 
 export default function Browse() {
-  const { status, search } = useCatalog();
+  const { status, search, chords } = useCatalog();
   const [repertoire] = useRepertoire();
   const [songs] = useSongs();
 
@@ -32,6 +32,13 @@ export default function Browse() {
   const [tempoMax, setTempoMax] = useState('');
   const [keyFilter, setKeyFilter] = useState('');   // '' = any, else '0'..'11'
   const [modeFilter, setModeFilter] = useState(''); // '' = any, '1' major, '0' minor
+
+  // Chord toggle filter: `available` is every chord the *other* filters allow;
+  // `excludedChords` are the ones toggled off (default all on = empty set).
+  const [available, setAvailable] = useState<ChordCount[]>([]);
+  const [chordsLoading, setChordsLoading] = useState(false);
+  const [excludedChords, setExcludedChords] = useState<Set<string>>(new Set());
+  const [showChords, setShowChords] = useState(false);
 
   const [results, setResults] = useState<CatalogSong[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -57,7 +64,20 @@ export default function Browse() {
   const knownSet = useMemo(() => knownSetAtLevel(knownTokens, level), [knownTokens, level]);
   const knownArr = useMemo(() => Array.from(knownSet), [knownSet]);
 
+  const excludeArr = useMemo(() => Array.from(excludedChords), [excludedChords]);
+  const excludeKey = useMemo(() => excludeArr.slice().sort().join('|'), [excludeArr]);
+
   const ready = status.phase === 'ready';
+
+  // Keep saved songs sharing this catalog as their source of truth: once the catalog
+  // is ready, re-resolve each saved song by its stable ref and refresh its cached
+  // catalogId/tempo/chords (which go stale when a rebuild renumbers rows). Migrate
+  // legacy songs to the ref+overlay model first.
+  useEffect(() => {
+    if (!ready) return;
+    migrateSongsToRefs();
+    resolveAndRefreshSongs().catch((err: unknown) => console.error('song resync failed:', err));
+  }, [ready]);
 
   // Debounced (re)search whenever filters change. Only runs once the catalog is ready.
   useEffect(() => {
@@ -67,7 +87,7 @@ export default function Browse() {
       setLoading(true);
       try {
         const { songs: rows, hasMore } = await search({
-          text, genre, known: knownArr, level, onlyPlayable, sort, limit: PAGE, offset: 0, ...audioOpts,
+          text, genre, known: knownArr, level, onlyPlayable, excludeChords: excludeArr, sort, limit: PAGE, offset: 0, ...audioOpts,
         });
         if (!cancelled) { setResults(rows); setHasMore(hasMore); }
       } catch (err) {
@@ -78,13 +98,37 @@ export default function Browse() {
     }, 250);
     return () => { cancelled = true; clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, text, genre, onlyPlayable, strict, sort, knownArr.join('|'), tempoMin, tempoMax, keyFilter, modeFilter]);
+  }, [ready, text, genre, onlyPlayable, strict, sort, knownArr.join('|'), excludeKey, tempoMin, tempoMax, keyFilter, modeFilter]);
+
+  // Load the chord toggle list: distinct chords across the songs the *other*
+  // filters allow (so it deliberately excludes `excludeChords` itself). Debounced.
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      if (!cancelled) setChordsLoading(true);
+      try {
+        const list = await chords({ text, genre, known: knownArr, level, onlyPlayable, ...audioOpts });
+        if (!cancelled) setAvailable(list);
+      } catch (err) {
+        console.error('BROWSE chords error:', err);
+      } finally {
+        if (!cancelled) setChordsLoading(false);
+      }
+    }, 250);
+    return () => { cancelled = true; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, text, genre, onlyPlayable, strict, knownArr.join('|'), tempoMin, tempoMax, keyFilter, modeFilter]);
+
+  // Match level flips which normalized chord column we compare on, so previously
+  // excluded tokens no longer line up — clear the toggle state when it changes.
+  useEffect(() => { setExcludedChords(new Set()); }, [strict]);
 
   async function loadMore() {
     setLoading(true);
     try {
       const { songs: rows, hasMore } = await search({
-        text, genre, known: knownArr, level, onlyPlayable, sort, limit: PAGE, offset: results.length, ...audioOpts,
+        text, genre, known: knownArr, level, onlyPlayable, excludeChords: excludeArr, sort, limit: PAGE, offset: results.length, ...audioOpts,
       });
       setResults(prev => [...prev, ...rows]);
       setHasMore(hasMore);
@@ -94,6 +138,20 @@ export default function Browse() {
   const ownedKeys = useMemo(
     () => new Set(songs.map(s => `${s.title} ${s.artist}`.toLowerCase())),
     [songs],
+  );
+
+  function toggleChordFilter(ch: string) {
+    setExcludedChords(prev => {
+      const next = new Set(prev);
+      if (next.has(ch)) next.delete(ch); else next.add(ch);
+      return next;
+    });
+  }
+
+  // How many of the currently-listed chords are toggled off.
+  const offCount = useMemo(
+    () => available.reduce((n, a) => n + (excludedChords.has(a.chord) ? 1 : 0), 0),
+    [available, excludedChords],
   );
 
   // Expand/collapse a song's full chord sequence, lazily fetching + caching it.
@@ -177,6 +235,49 @@ export default function Browse() {
                 </span>
               )}
             </div>
+
+            <div className="col" style={{ gap: 6, marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--line)' }}>
+              <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button className="button" onClick={() => setShowChords(v => !v)}
+                  title="Toggle a chord off to hide songs that use it"
+                  style={{ padding: '2px 10px', fontSize: 13 }}>
+                  <span style={{ display: 'inline-block', width: 10 }}>{showChords ? '▾' : '▸'}</span> Chords
+                </button>
+                {offCount > 0 && <span className="muted" style={{ fontSize: 12 }}>{offCount} hidden</span>}
+                {offCount > 0 && (
+                  <button className="button" onClick={() => setExcludedChords(new Set())}
+                    style={{ padding: '2px 10px', fontSize: 12 }}>Reset</button>
+                )}
+                {!showChords && offCount === 0 && (
+                  <span className="muted" style={{ fontSize: 12 }}>Toggle off any chord to hide songs that use it.</span>
+                )}
+              </div>
+              {showChords && (
+                <div className="row" style={{ flexWrap: 'wrap', gap: 6, marginTop: 2, maxHeight: 168, overflowY: 'auto' }}>
+                  {available.length === 0 && (
+                    <span className="muted" style={{ fontSize: 12 }}>
+                      {chordsLoading ? 'Finding chords…' : 'No chords for these filters.'}
+                    </span>
+                  )}
+                  {available.map(({ chord, n }) => {
+                    const known = isKnown(chord, knownSet, level);
+                    const off = excludedChords.has(chord);
+                    return (
+                      <button key={chord} onClick={() => toggleChordFilter(chord)}
+                        title={`${n.toLocaleString()} song${n === 1 ? '' : 's'}${off ? ' · hidden' : ''}`}
+                        style={{
+                          padding: '4px 10px', borderRadius: 999, cursor: 'pointer', fontWeight: 700, fontSize: 13,
+                          background: !off && known ? 'var(--good)' : 'transparent',
+                          color: off ? 'var(--muted)' : known ? '#fff' : 'var(--muted)',
+                          border: known ? '1px solid var(--good)' : '1px dashed var(--line)',
+                          opacity: off ? 0.45 : 1,
+                          textDecoration: off ? 'line-through' : 'none',
+                        }}>{chord}</button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="col" style={{ gap: 12, marginTop: 12 }}>
@@ -184,35 +285,40 @@ export default function Browse() {
             {results.map(s => {
               const added = ownedKeys.has(`${s.title} ${s.artist}`.toLowerCase());
               return (
-                <div key={s.id} className="card">
-                  <div className="row" style={{ gap: 10 }}>
-                    <AlbumArt spotifyId={s.spotifyId} artUrl={s.artUrl} />
-                    <div>
-                      <div style={{ fontSize: 18, fontWeight: 800 }}>{s.title}</div>
-                      <div className="muted">{s.artist || '—'}{s.genre ? ` · ${s.genre}` : ''}{tempoKey(s)}</div>
-                    </div>
-                    <div className="spacer" />
-                    {s.spotifyId && (
-                      <a className="button" href={`https://open.spotify.com/track/${s.spotifyId}`}
-                        target="_blank" rel="noreferrer" title="Open on Spotify"
-                        style={{ padding: '2px 10px', fontSize: 13, color: '#1DB954', borderColor: '#1DB954' }}>
-                        Spotify ↗
-                      </a>
-                    )}
-                    <button className="button" title="Edit chords, add a sheet or audio"
-                      onClick={() => { const id = saveCatalogSong(s); ensureInDefaultPlaylist(id); setEditingSong(id); }}
-                      style={{ padding: '2px 10px', fontSize: 15 }}>✏️</button>
-                    <button className="button"
-                      title={added ? 'In your playlists — click to change' : 'Add to a playlist'}
-                      onClick={() => { const id = saveCatalogSong(s); ensureInDefaultPlaylist(id); setPickerSong(id); }}
-                      style={{
-                        padding: '2px 12px', fontWeight: 800, fontSize: 20, lineHeight: 1.2,
-                        background: added ? 'var(--accent)' : undefined,
-                        color: added ? 'var(--accent-ink)' : undefined,
-                        borderColor: added ? 'var(--accent)' : undefined,
-                      }}>+</button>
-                  </div>
-                  <div className="row" style={{ marginTop: 8, flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                <SongCardShell
+                  key={s.id}
+                  art={<AlbumArt spotifyId={s.spotifyId} artUrl={s.artUrl} />}
+                  title={s.title}
+                  subtitle={<>{s.artist || '—'}{s.genre ? ` · ${s.genre}` : ''}{tempoKey(s)}</>}
+                  actions={
+                    <>
+                      {s.spotifyId && (
+                        <a className="button" href={`https://open.spotify.com/track/${s.spotifyId}`}
+                          target="_blank" rel="noreferrer" title="Open on Spotify"
+                          style={{ padding: '2px 10px', fontSize: 13, color: '#1DB954', borderColor: '#1DB954' }}>
+                          Spotify ↗
+                        </a>
+                      )}
+                      <button className="button" title="Edit chords, add a sheet or audio"
+                        onClick={() => { const id = saveCatalogSong(s); ensureInDefaultPlaylist(id); setEditingSong(id); }}
+                        style={{ padding: '2px 10px', fontSize: 15 }}>✏️</button>
+                      <button className="button"
+                        title={added ? 'In your playlists — click to change' : 'Add to a playlist'}
+                        onClick={() => { const id = saveCatalogSong(s); ensureInDefaultPlaylist(id); setPickerSong(id); }}
+                        style={{
+                          padding: '2px 12px', fontWeight: 800, fontSize: 20, lineHeight: 1.2,
+                          background: added ? 'var(--accent)' : undefined,
+                          color: added ? 'var(--accent-ink)' : undefined,
+                          borderColor: added ? 'var(--accent)' : undefined,
+                        }}>+</button>
+                    </>
+                  }
+                  chords={s.chords}
+                  knownSet={knownSet}
+                  level={level}
+                  catalogId={s.id}
+                  tempo={s.tempo}
+                  chordsLeading={
                     <button onClick={() => toggleSequence(s.id)}
                       title="Show/hide the full chord sequence"
                       style={{
@@ -223,22 +329,8 @@ export default function Browse() {
                       <span style={{ display: 'inline-block', fontSize: 9, lineHeight: 1, transition: 'transform .15s',
                         transform: expanded === s.id ? 'rotate(180deg)' : 'none' }}>▼</span>
                     </button>
-                    {s.chords.map((ch, i) => {
-                      const known = isKnown(ch, knownSet, level);
-                      return (
-                        <span key={i} style={{
-                          padding: '4px 10px', borderRadius: 999,
-                          background: known ? 'var(--good)' : 'transparent',
-                          color: known ? '#fff' : 'var(--muted)',
-                          border: known ? '1px solid var(--good)' : '1px dashed var(--line)',
-                          fontWeight: 700, fontSize: 13,
-                        }}>{ch}</span>
-                      );
-                    })}
-                  </div>
-
-                  <SongTransitions catalogId={s.id} tempo={s.tempo} />
-
+                  }
+                >
                   {expanded === s.id && (
                     <div className="col" style={{ gap: 8, marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
                       {!progCache[s.id] && <span className="muted">Loading sequence…</span>}
@@ -264,7 +356,7 @@ export default function Browse() {
                       ))}
                     </div>
                   )}
-                </div>
+                </SongCardShell>
               );
             })}
           </div>

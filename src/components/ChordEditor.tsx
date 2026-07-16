@@ -1,14 +1,19 @@
 import { useMemo, useState } from 'react';
 import { ChordDiagram } from './ChordDiagram';
+import { CHORD_CATEGORIES, type ChordCategoryId } from '../data/chordCategories';
 import type { ChordShape, FingerMark } from '../state/store';
 
 type Props = {
   initialName?: string;
   initialShape?: ChordShape;
-  onSave: (value: { name: string; shape: ChordShape }) => void;
+  onSave: (value: { name: string; shape: ChordShape; category?: ChordCategoryId }) => void;
   onCancel?: () => void;
   saveLabel?: string;
   title?: string;
+  // When true, show a category picker (defaulting to `initialCategory`, else "Other")
+  // and include the chosen category in the saved value. Used when registering a new chord.
+  withCategory?: boolean;
+  initialCategory?: ChordCategoryId;
 };
 
 const EMPTY_FRETS: string[] = ['x', 'x', 'x', 'x', 'x', 'x'];
@@ -57,9 +62,10 @@ function parseFret(s: string, stringIdx: number): number | 'x' {
   return n;
 }
 
-export function ChordEditor({ initialName = '', initialShape, onSave, onCancel, saveLabel = 'Save', title = 'Custom chord' }: Props) {
+export function ChordEditor({ initialName = '', initialShape, onSave, onCancel, saveLabel = 'Save', title = 'Custom chord', withCategory = false, initialCategory }: Props) {
   const initial = useMemo(() => shapeToInputs(initialShape), [initialShape]);
   const [name, setName] = useState(initialName);
+  const [category, setCategory] = useState<ChordCategoryId>(initialCategory ?? 'other');
   const [frets, setFrets] = useState<string[]>(initial.frets);
   const [fingers, setFingers] = useState<string[]>(initial.fingers);
   const [baseFret, setBaseFret] = useState<string>(initial.baseFret);
@@ -115,7 +121,7 @@ export function ChordEditor({ initialName = '', initialShape, onSave, onCancel, 
         if (from >= to) throw new Error('Barre from-string must be less than to-string');
         barre = { fromIndex: from, toIndex: to, fret: bfret };
       }
-      onSave({ name: trimmed, shape: { frets: f, fingers: fi, baseFret: bf, barre } });
+      onSave({ name: trimmed, shape: { frets: f, fingers: fi, baseFret: bf, barre }, category: withCategory ? category : undefined });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -143,6 +149,16 @@ export function ChordEditor({ initialName = '', initialShape, onSave, onCancel, 
               style={{ padding: '6px 10px', border: '1px solid var(--line)', borderRadius: 8 }}
             />
           </label>
+
+          {withCategory && (
+            <label className="col" style={{ gap: 4, marginTop: 10 }}>
+              Category
+              <select value={category} onChange={e => setCategory(e.target.value as ChordCategoryId)}
+                style={{ padding: '6px 10px', border: '1px solid var(--line)', borderRadius: 8 }}>
+                {CHORD_CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </label>
+          )}
 
           <table className="matrix" style={{ marginTop: 10 }}>
             <thead>

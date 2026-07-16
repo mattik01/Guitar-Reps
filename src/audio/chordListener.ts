@@ -93,6 +93,14 @@ const BUZZ_BAND_WEIGHT = 0.7;
 const BAND_FLOOR_FALL_ALPHA = 0.1;
 const BAND_FLOOR_RISE_ALPHA = 0.005;
 const LEVEL_EMA_ALPHA = 0.3;
+// Optional "Filters" front-end (Tier-1 DSP): a steep high-pass kills sub-bass
+// rumble / HVAC / handling thumps below the low-E fundamental (E2 ≈ 82 Hz), and
+// a gentle low-pass trims hiss above the guitar's useful harmonics. Chroma
+// folding already ignores <90 Hz, so this mainly cleans the RMS/level + noise-
+// floor + flux paths without touching the pitched content.
+const FILTER_HP_HZ = 75;
+const FILTER_HP_Q = 0.707; // Butterworth — no resonant peak near low E
+const FILTER_LP_HZ = 7000;
 // A strummed chord still rings at the end of the post-onset window; a knock on
 // the body (or a muted scratch) has decayed. Percussive = end RMS below this
 // fraction of the window's peak RMS. Relative, so hardware-independent.
@@ -128,6 +136,13 @@ export class ChordListener {
   private source: MediaStreamAudioSourceNode | null = null;
   private onsetAnalyser: AnalyserNode | null = null;
   private chromaAnalyser: AnalyserNode | null = null;
+  private rawAnalyser: AnalyserNode | null = null; // pre-filter, for the spectrum viz
+  private rawSpec = new Float32Array(0);
+  private hpFilter: BiquadFilterNode | null = null;
+  private lpFilter: BiquadFilterNode | null = null;
+  private filtersEnabled = false; // user "Filters" toggle; reroutes the graph
+  private filterHpHz = FILTER_HP_HZ;  // tunable cutoffs (setFilterParams)
+  private filterLpHz = FILTER_LP_HZ;
   private intervalId: number | null = null;
 
   private targets: Target[] = [];
@@ -152,6 +167,7 @@ export class ChordListener {
   private fluxMean = 0;
   private fluxDev = 0;
   private noiseFloorRms = 0.001;
+  private userGateRms = 0; // user activation threshold as a linear-RMS floor; 0 = off
   private betweenFloor = -1; // -1 = uninitialized; first frame sets it directly
   private buzzFloor = -1;
   private level = 0;
@@ -194,9 +210,71 @@ export class ChordListener {
     return Math.min(1, Math.max(0, (20 * Math.log10(this.level) + 60) / 60));
   }
 
+  /**
+   * User "activation threshold" (Discord-style noise gate), given on the same
+   * 0..1 log scale getLevel() returns. Inverts that mapping to a linear-RMS
+   * floor folded into both event gates. 0 = off. Only ever RAISES the floor
+   * (via Math.max), so it can't defeat the adaptive noise gate.
+   */
+  setMinLevel(level01: number): void {
+    this.userGateRms = level01 <= 0 ? 0 : Math.pow(10, 3 * (level01 - 1));
+  }
+
+  /** Toggle the Tier-1 DSP front-end (high-pass + low-pass). Reroutes live. */
+  setFilters(enabled: boolean): void {
+    if (enabled === this.filtersEnabled) return;
+    this.filtersEnabled = enabled;
+    if (this.ctx) this.applyRouting();
+  }
+
+  /** Tune the filter cutoffs (Hz). Applied to the live biquads immediately. */
+  setFilterParams(hpHz: number, lpHz: number): void {
+    this.filterHpHz = Math.max(20, Math.min(300, hpHz || FILTER_HP_HZ));
+    this.filterLpHz = Math.max(this.filterHpHz + 500, Math.min(16000, lpHz || FILTER_LP_HZ));
+    if (this.hpFilter) this.hpFilter.frequency.value = this.filterHpHz;
+    if (this.lpFilter) this.lpFilter.frequency.value = this.filterLpHz;
+  }
+
+  // (Re)connect source → [HP → LP] → both analysers depending on filtersEnabled.
+  private applyRouting(): void {
+    const src = this.source, hp = this.hpFilter, lp = this.lpFilter;
+    const onset = this.onsetAnalyser, chroma = this.chromaAnalyser;
+    if (!src || !hp || !lp || !onset || !chroma) return;
+    src.disconnect();
+    hp.disconnect();
+    lp.disconnect();
+    if (this.filtersEnabled) {
+      src.connect(hp);
+      hp.connect(lp);
+      lp.connect(onset);
+      lp.connect(chroma);
+    } else {
+      src.connect(onset);
+      src.connect(chroma);
+    }
+    // Raw tap is ALWAYS pre-filter (src.disconnect() above dropped it too).
+    if (this.rawAnalyser) src.connect(this.rawAnalyser);
+  }
+
   /** Live (non-onset) chroma snapshot, unit norm. For debug visualization. */
   getLiveChroma(): Float32Array {
     return this.liveChroma;
+  }
+
+  /** Live magnitude spectrum (dB per bin) from the RAW pre-filter tap — so the
+   *  filter tuning UI can show the rumble/hiss you're deciding whether to cut,
+   *  independent of whether the filter is currently on. */
+  getSpectrum(): Float32Array {
+    if (this.rawAnalyser) this.rawAnalyser.getFloatFrequencyData(this.rawSpec);
+    return this.rawSpec;
+  }
+
+  /** Sample rate + FFT size needed to map spectrum bins → Hz. */
+  getSpectrumMeta(): { sampleRate: number; fftSize: number } {
+    return {
+      sampleRate: this.ctx?.sampleRate ?? 44100,
+      fftSize: this.rawAnalyser?.fftSize ?? CHROMA_FFT_SIZE,
+    };
   }
 
   async start(): Promise<void> {
@@ -220,8 +298,18 @@ export class ChordListener {
       this.chromaAnalyser = this.ctx.createAnalyser();
       this.chromaAnalyser.fftSize = CHROMA_FFT_SIZE;
       this.chromaAnalyser.smoothingTimeConstant = 0;
-      this.source.connect(this.onsetAnalyser);
-      this.source.connect(this.chromaAnalyser);
+      this.hpFilter = this.ctx.createBiquadFilter();
+      this.hpFilter.type = 'highpass';
+      this.hpFilter.frequency.value = this.filterHpHz;
+      this.hpFilter.Q.value = FILTER_HP_Q;
+      this.lpFilter = this.ctx.createBiquadFilter();
+      this.lpFilter.type = 'lowpass';
+      this.lpFilter.frequency.value = this.filterLpHz;
+      this.rawAnalyser = this.ctx.createAnalyser();
+      this.rawAnalyser.fftSize = CHROMA_FFT_SIZE;
+      this.rawAnalyser.smoothingTimeConstant = 0;
+      this.rawSpec = new Float32Array(this.rawAnalyser.frequencyBinCount);
+      this.applyRouting(); // wires source → [HP→LP] → analysers per filtersEnabled
 
       this.timeBuf = new Float32Array(ONSET_FFT_SIZE);
       this.onsetSpec = new Float32Array(this.onsetAnalyser.frequencyBinCount);
@@ -261,6 +349,12 @@ export class ChordListener {
     if (this.intervalId != null) { window.clearInterval(this.intervalId); this.intervalId = null; }
     this.source?.disconnect();
     this.source = null;
+    this.hpFilter?.disconnect();
+    this.hpFilter = null;
+    this.lpFilter?.disconnect();
+    this.lpFilter = null;
+    this.rawAnalyser?.disconnect();
+    this.rawAnalyser = null;
     this.onsetAnalyser = null;
     this.chromaAnalyser = null;
     this.stream?.getTracks().forEach(t => t.stop());
@@ -308,7 +402,7 @@ export class ChordListener {
 
     // 3. Adaptive onset decision (relative — absolute levels differ per mic)
     const threshold = this.fluxMean + FLUX_THRESHOLD_K * this.fluxDev;
-    const gate = Math.max(MIN_RMS_ABS, NOISE_GATE_RATIO * this.noiseFloorRms);
+    const gate = Math.max(this.userGateRms, MIN_RMS_ABS, NOISE_GATE_RATIO * this.noiseFloorRms);
     const isOnset = flux > threshold && rms > gate && now - this.lastOnsetAt > ONSET_REFRACTORY_MS
       && this.fluxDev > 0; // never fire on the very first frames
     this.fluxMean += FLUX_EMA_ALPHA * (flux - this.fluxMean);
@@ -380,7 +474,7 @@ export class ChordListener {
     if (percussive) {
       // Percussive/non-chordal: a knock on the body, a click, a single pluck.
       // A real knock is LOUD — drop quiet blips (room noise, distant taps).
-      if (p.rmsPeak < Math.max(KNOCK_MIN_RMS_ABS, KNOCK_PEAK_RATIO * this.noiseFloorRms)) return;
+      if (p.rmsPeak < Math.max(this.userGateRms, KNOCK_MIN_RMS_ABS, KNOCK_PEAK_RATIO * this.noiseFloorRms)) return;
       const e: KnockEvent = { at: p.at };
       this.knockCbs.forEach(cb => cb(e));
       const gap = p.at - this.lastKnockAt;
