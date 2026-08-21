@@ -159,6 +159,9 @@ export type Song = {
   lang?: string;
   popularity?: number;
   spotifyId?: string;
+  // Canonical YouTube video for this song, from the catalog's spotify->youtube map.
+  // Cached (not user data) — a user's own link lives in the overlay's `url` and wins.
+  youtubeId?: string;
   catalogId?: number; // CURRENT-build row id; refreshed live, never trusted long-term
   tempo?: number;     // BPM (audio feature), used to grade chord-transition speed targets
   source?: 'seed' | 'user';
@@ -382,6 +385,7 @@ export function refreshSongCache(byRef: Map<string, CatalogSong>) {
       genre: cs.genre ?? undefined,
       popularity: cs.popularity ?? undefined,
       spotifyId: cs.spotifyId ?? undefined,
+      youtubeId: cs.youtubeId ?? undefined,
       catalogId: cs.id,
       tempo: cs.tempo ?? undefined,
     };
@@ -475,6 +479,7 @@ export function saveCatalogSong(cs: CatalogSong): string {
     genre: cs.genre ?? undefined,
     popularity: cs.popularity ?? undefined,
     spotifyId: cs.spotifyId ?? undefined,
+    youtubeId: cs.youtubeId ?? undefined,
     catalogId: cs.id,
     tempo: cs.tempo ?? undefined,
     source: 'seed' as const,

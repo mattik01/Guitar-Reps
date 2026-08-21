@@ -222,7 +222,7 @@ function searchSongs(o: SearchOpts): { rows: Row[]; hasMore: boolean } {
 }
 
 const SONG_COLS = `s.id, s.title, s.artist, s.genre, s.popularity, s.chords_json,
-  s.tempo, s.song_key, s.song_mode, s.spotify_id, s.art_url`;
+  s.tempo, s.song_key, s.song_mode, s.spotify_id, s.art_url, s.youtube_id, s.youtube_conf, s.match_key`;
 
 // Match imported Spotify tracks against the catalog: primarily by spotify_id,
 // then by exact lowercased "title|artist" for tracks whose id didn't hit (the
@@ -240,6 +240,27 @@ function matchTracks(p: { tracks: { id: string | null; key: string }[] }): { byI
         WHERE lower(s.title) || '|' || lower(s.artist) IN (SELECT value FROM json_each(?))`, [JSON.stringify(keys)])
     : [];
   return { byId, byKey };
+}
+
+// Resolve YouTube video ids straight to catalog songs via the precomputed reverse
+// index. Only hits our canonical id for a song -- a user's playlist can hold any
+// upload (cover/live/lyric video), so callers fall back to matchTracks on the
+// video title+channel for whatever misses here.
+// Look songs up by the shared normalized key (src/data/matchKey.ts). This is what
+// makes import work on real-world titles: "Black Hole Sun" finds the catalog's
+// "Black Hole Sun - Recorded Live At Red Robinson Show Theatre, Vancouver".
+function matchKeys(p: { keys: string[] }): Row[] {
+  const keys = [...new Set(p.keys.filter(Boolean))];
+  if (!keys.length) return [];
+  return rows(`SELECT ${SONG_COLS} FROM songs s
+    WHERE s.match_key IN (SELECT value FROM json_each(?))`, [JSON.stringify(keys)]);
+}
+
+function matchYouTube(p: { videoIds: string[] }): Row[] {
+  const ids = [...new Set(p.videoIds.filter(Boolean))];
+  if (!ids.length) return [];
+  return rows(`SELECT ${SONG_COLS} FROM songs s
+    WHERE s.youtube_id IN (SELECT value FROM json_each(?))`, [JSON.stringify(ids)]);
 }
 
 function getProgression(id: number): string | null {
@@ -274,6 +295,8 @@ self.onmessage = async (e: MessageEvent) => {
       case 'progression': result = getProgression((payload as { id: number }).id); break;
       case 'getSong': result = getSongById((payload as { id: number }).id); break;
       case 'matchTracks': result = matchTracks(payload as { tracks: { id: string | null; key: string }[] }); break;
+      case 'matchYouTube': result = matchYouTube(payload as { videoIds: string[] }); break;
+      case 'matchKeys': result = matchKeys(payload as { keys: string[] }); break;
       case 'meta': result = meta(); break;
       default: throw new Error(`Unknown request: ${type}`);
     }

@@ -3,6 +3,7 @@ import { usePlaylists, useSongs, useSongOverlays, useRepertoire, mergeSong, migr
 import { useCatalog } from '../data/catalogDb';
 import { knownSetAtLevel, isKnown, type MatchLevel } from '../data/chordNormalize';
 import { importSpotifyPlaylist, parsePlaylistId, type ImportResult } from '../data/spotifyImport';
+import { importYoutubePlaylist, parseYoutubePlaylistId } from '../data/youtubeImport';
 import { SongCard } from '../components/SongCard';
 import { SongEditor } from '../components/SongEditor';
 import { PlaylistPicker } from '../components/PlaylistPicker';
@@ -27,7 +28,7 @@ export default function Playlists() {
   const [importUrl, setImportUrl] = useState('');
   const [importing, setImporting] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
-  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [importResult, setImportResult] = useState<(ImportResult & { matchedExact?: number }) | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
 
   const [onlyPlayable, setOnlyPlayable] = useState(false);
@@ -73,12 +74,23 @@ export default function Playlists() {
     setPlaylists(prev => prev.map(p => (p.id === pid ? { ...p, songIds: p.songIds.filter(i => i !== sid) } : p)));
   }
 
+  // One input for both services; the link shape decides which importer runs.
+  function importSource(url: string): 'spotify' | 'youtube' | null {
+    if (parsePlaylistId(url)) return 'spotify';
+    if (/youtu\.?be/i.test(url) && parseYoutubePlaylistId(url)) return 'youtube';
+    return null;
+  }
+
   async function runImport() {
+    const source = importSource(importUrl);
+    if (!source) return;
     setImporting(true);
     setImportError(null);
     setImportResult(null);
     try {
-      const result = await importSpotifyPlaylist(importUrl, setImportStatus);
+      const result = source === 'youtube'
+        ? await importYoutubePlaylist(importUrl, setImportStatus)
+        : await importSpotifyPlaylist(importUrl, setImportStatus);
       setImportResult(result);
       setImportUrl('');
       setSelectedId(result.playlistId);
@@ -102,7 +114,7 @@ export default function Playlists() {
         <h1>Songs</h1>
         <div className="spacer" />
       </div>
-      <p className="muted">Your songs, grouped into playlists. Add them from the <strong>Browse</strong> catalog or import a Spotify playlist below.</p>
+      <p className="muted">Your songs, grouped into playlists. Add them from the <strong>Browse</strong> catalog or import a Spotify or YouTube playlist below.</p>
 
       <div className="card">
         <div className="row" style={{ gap: 6 }}>
@@ -116,17 +128,17 @@ export default function Playlists() {
 
       <div className="card">
         <div className="row" style={{ gap: 6 }}>
-          <input type="text" value={importUrl} placeholder="Paste a Spotify playlist link… (https://open.spotify.com/playlist/…)"
+          <input type="text" value={importUrl} placeholder="Paste a Spotify or YouTube playlist link…"
             onChange={e => setImportUrl(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && !importing && parsePlaylistId(importUrl)) { e.preventDefault(); runImport(); } }}
+            onKeyDown={e => { if (e.key === 'Enter' && !importing && importSource(importUrl)) { e.preventDefault(); runImport(); } }}
             disabled={importing}
             style={{ padding: '6px 10px', border: '1px solid var(--line)', borderRadius: 8, flex: 1 }} />
-          <button className="button primary" onClick={runImport} disabled={importing || !parsePlaylistId(importUrl)}>
-            {importing ? 'Importing…' : '⬇ Import from Spotify'}
+          <button className="button primary" onClick={runImport} disabled={importing || !importSource(importUrl)}>
+            {importing ? 'Importing…' : importSource(importUrl) === 'youtube' ? '⬇ Import from YouTube' : '⬇ Import from Spotify'}
           </button>
         </div>
         <p className="muted" style={{ marginTop: 6, marginBottom: 0, fontSize: 13 }}>
-          Every track we know chords for gets added to a playlist with the Spotify playlist's name.
+          Every track we know chords for gets added to a playlist named after the source playlist.
           Re-importing merges new tracks into it. (The playlist must be public.)
         </p>
         {importStatus && <p className="muted" style={{ marginTop: 8, marginBottom: 0 }}>{importStatus}</p>}
@@ -136,6 +148,9 @@ export default function Playlists() {
             <p style={{ margin: 0 }}>
               Imported <strong>{importResult.playlistName}</strong>: matched {importResult.matched} of {importResult.total} tracks
               {importResult.added < importResult.matched ? ` (${importResult.added} new, the rest were already there)` : ''}.
+              {importResult.matchedExact != null && (
+                <span className="muted"> {importResult.matchedExact} matched exactly by video id.</span>
+              )}
             </p>
             {importResult.unmatched.length > 0 && (
               <details style={{ marginTop: 4 }}>

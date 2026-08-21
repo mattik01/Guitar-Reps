@@ -1,9 +1,10 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { spotifyPlaylistProxy } from './scripts/spotifyPlaylistProxy';
+import { youtubePlaylistProxy } from './scripts/youtubePlaylistProxy';
 
 export default defineConfig({
-  plugins: [react(), spotifyPlaylistProxy()],
+  plugins: [react(), spotifyPlaylistProxy(), youtubePlaylistProxy()],
   // Pin the dev-server port. localStorage/IndexedDB (repertoire, swaps, uploads) is
   // scoped to the origin *including the port*, so a floating port makes saved data
   // "disappear" whenever Vite hops to a new one. strictPort fails loudly if 5173 is

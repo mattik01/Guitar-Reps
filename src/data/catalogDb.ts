@@ -16,6 +16,9 @@ export type CatalogSong = {
   mode: number | null; // 1 major, 0 minor
   spotifyId: string | null;
   artUrl: string | null;
+  youtubeId: string | null;
+  youtubeConf: string | null;
+  matchKey: string | null;
 };
 
 export type SearchOpts = {
@@ -98,6 +101,8 @@ function toSong(r: any): CatalogSong {
     chords: safeParse(r.chords_json),
     tempo: r.tempo ?? null, key: r.song_key ?? null, mode: r.song_mode ?? null,
     spotifyId: r.spotify_id ?? null, artUrl: r.art_url ?? null,
+    youtubeId: r.youtube_id ?? null, youtubeConf: r.youtube_conf ?? null,
+    matchKey: r.match_key ?? null,
   };
 }
 function safeParse(s: unknown): string[] {
@@ -137,6 +142,32 @@ export async function matchCatalogTracks(
   const byKey = new Map<string, CatalogSong>();
   for (const row of r.byKey) if (row.match_key && !byKey.has(row.match_key)) byKey.set(row.match_key, toSong(row));
   return { byId, byKey };
+}
+
+/** Look up catalog songs by normalized `matchKey(title, artist)` values. */
+export async function matchCatalogKeys(keys: string[]): Promise<Map<string, CatalogSong>> {
+  const rows = await call<any[]>('matchKeys', { keys });
+  const byKey = new Map<string, CatalogSong>();
+  for (const row of rows ?? []) {
+    if (row.match_key && !byKey.has(row.match_key)) byKey.set(row.match_key, toSong(row));
+  }
+  return byKey;
+}
+
+/**
+ * Resolve YouTube video ids to catalog songs via the precomputed reverse index.
+ * Only our canonical id per song hits here; callers fall back to
+ * `matchCatalogTracks` on the video title+channel for the rest.
+ */
+export async function matchCatalogYouTube(
+  videoIds: string[],
+): Promise<Map<string, CatalogSong>> {
+  const rows = await call<any[]>('matchYouTube', { videoIds });
+  const byVideo = new Map<string, CatalogSong>();
+  for (const row of rows ?? []) {
+    if (row.youtube_id && !byVideo.has(row.youtube_id)) byVideo.set(row.youtube_id, toSong(row));
+  }
+  return byVideo;
 }
 
 /** Full raw progression (with section tags) for one catalog song, or null. */

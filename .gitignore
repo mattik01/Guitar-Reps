@@ -22,3 +22,8 @@ public/catalog.meta.json
 
 # Transient enrichment/run logs
 *.log
+.check-yt.mjs
+
+# Compiled output of the vite proxy plugins (vite imports the .ts directly)
+scripts/youtubePlaylistProxy.js
+scripts/youtubePlaylistProxy.d.ts

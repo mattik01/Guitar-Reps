@@ -137,6 +137,14 @@ export function SongCard({ song, knownSet, level, actions }: {
       subtitle={`${song.artist || '—'}${song.genre ? ` · ${song.genre}` : ''}`}
       actions={
         <>
+          {/* Exact video when the catalog has one (96% of songs), else a YouTube
+              search — so every song is one click from something to play along to. */}
+          <a className="button" target="_blank" rel="noreferrer"
+             href={song.youtubeId
+               ? `https://www.youtube.com/watch?v=${song.youtubeId}`
+               : `https://www.youtube.com/results?search_query=${encodeURIComponent(`${song.artist} ${song.title}`)}`}>
+            {song.youtubeId ? '▶ YouTube' : '▶ Find on YouTube'}
+          </a>
           {song.url && (
             <a className="button" href={song.url} target="_blank" rel="noreferrer">Open link ↗</a>
           )}

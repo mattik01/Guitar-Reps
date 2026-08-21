@@ -18,13 +18,16 @@ import { parse as parseStream } from 'csv-parse';
 import Database from 'better-sqlite3';
 import { parseChord } from '../src/data/chordNormalize';
 import { chordonomiconToStandard, isStructuralTag } from '../src/data/chordonomicon';
+import { matchKey } from '../src/data/matchKey';
 
-const CATALOG_VERSION = 6; // v6: stable content-hash row ids (survive rebuilds); v5 = dataset names + audio features + metadata.
+const CATALOG_VERSION = 9; // v9: youtube_id topped up from the ytmusicapi crawl; v8 = match_key (shared normalizer); v7 = youtube_id/youtube_conf.
 const ROOT = process.cwd();
 const RAW_DIR = path.join(ROOT, 'data', 'raw');
 const OUT_DIR = path.join(ROOT, 'public');
 const SPOTIFY_CACHE = path.join(RAW_DIR, 'spotify-cache.json');
 const TRACK_FEATURES = path.join(RAW_DIR, 'track-features.json'); // track_id → {title,artist,album,tempo,key,mode,energy,…}
+// spotify_id → [youtube_id, confidence]; built by data/raw/spotify-youtube/export_map.py
+const YOUTUBE_MAP = path.join(RAW_DIR, 'spotify-youtube', 'youtube_map.json');
 
 // ---- locate the source CSV --------------------------------------------------
 function findCsv(): string {
@@ -135,6 +138,12 @@ function openDb() {
       album TEXT,
       album_release_date TEXT,
       art_url TEXT,
+      -- YouTube link (LAION join + YouTube-Music crawl). youtube_conf is high|medium|low
+      -- so the UI can prefer exact matches and fall back to a YouTube search link.
+      youtube_id TEXT,
+      youtube_conf TEXT,
+      -- normalized "title|artist" (src/data/matchKey.ts) for playlist-import lookups
+      match_key TEXT,
       -- audio features (from the static 56M-track dataset join; Spotify's estimates)
       tempo REAL,
       song_key INTEGER,   -- 0..11 pitch class (-1 = undetected)
@@ -163,6 +172,7 @@ type SongRec = {
   // Spotify /tracks extras
   durationMs?: number | null; explicit?: boolean | null; isrc?: string | null;
   spotifyUrl?: string | null; album?: string | null; albumReleaseDate?: string | null; artUrl?: string | null;
+  youtubeId?: string | null; youtubeConf?: string | null;
   // audio features
   tempo?: number | null; songKey?: number | null; songMode?: number | null;
   danceability?: number | null; energy?: number | null; valence?: number | null; acousticness?: number | null;
@@ -175,10 +185,11 @@ function makeInserter(db: Database.Database) {
     `INSERT INTO songs (id,title,artist,genre,lang,popularity,spotify_id,decade,chords_json,
        progression,release_date,genres,rock_genre,artist_id,spotify_artist_id,
        duration_ms,explicit,isrc,spotify_url,album,album_release_date,art_url,
+       youtube_id,youtube_conf,match_key,
        tempo,song_key,song_mode,
        danceability,energy,valence,acousticness,instrumentalness,liveness,speechiness,loudness,
        artist_popularity,artist_followers)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   const insChord = db.prepare(
     `INSERT INTO song_chords (song_id,chord_exact,chord_medium,chord_base) VALUES (?,?,?,?)`);
   const seen = new Set<string>();
@@ -207,6 +218,7 @@ function makeInserter(db: Database.Database) {
       r.rockGenre ?? null, r.artistId ?? null, r.spotifyArtistId ?? null,
       r.durationMs ?? null, r.explicit == null ? null : (r.explicit ? 1 : 0), r.isrc ?? null,
       r.spotifyUrl ?? null, r.album ?? null, r.albumReleaseDate ?? null, r.artUrl ?? null,
+      r.youtubeId ?? null, r.youtubeConf ?? null, matchKey(r.title, r.artist),
       r.tempo ?? null, r.songKey ?? null, r.songMode ?? null,
       r.danceability ?? null, r.energy ?? null, r.valence ?? null, r.acousticness ?? null,
       r.instrumentalness ?? null, r.liveness ?? null, r.speechiness ?? null, r.loudness ?? null,
@@ -228,6 +240,8 @@ function finish(db: Database.Database, dbPath: string, songs: number) {
   console.log('Building indexes …');
   db.exec(`
     CREATE INDEX idx_songs_pop ON songs(popularity DESC);
+    CREATE INDEX idx_songs_youtube ON songs(youtube_id);
+    CREATE INDEX idx_songs_matchkey ON songs(match_key);
     CREATE INDEX idx_songs_title ON songs(title COLLATE NOCASE);
     CREATE INDEX idx_songs_artist ON songs(artist COLLATE NOCASE);
     CREATE INDEX idx_sc_song ON song_chords(song_id);
@@ -318,6 +332,12 @@ async function buildChordonomicon(csvPath: string) {
     ? JSON.parse(readFileSync(SPOTIFY_CACHE, 'utf8')) : {};
   console.log(`Spotify cache: ${Object.values(cache).filter(Boolean).length.toLocaleString()} named ids.`);
 
+  // spotify_id → [youtube_id, confidence]. Optional: without it the catalog simply has
+  // no youtube_id and the UI falls back to a YouTube search link.
+  const ytMap: Record<string, [string, string]> = existsSync(YOUTUBE_MAP)
+    ? JSON.parse(readFileSync(YOUTUBE_MAP, 'utf8')) : {};
+  console.log(`YouTube map: ${Object.keys(ytMap).length.toLocaleString()} linked ids.`);
+
   if (!Object.keys(feats).length && !Object.keys(cache).length) {
     throw new Error(`Need names: run \`python3.10 scripts/joinAudioFeatures.py\` (→ ${TRACK_FEATURES}) and/or \`npm run enrich:spotify\`.`);
   }
@@ -364,6 +384,8 @@ async function buildChordonomicon(csvPath: string) {
       isrc: sp?.isrc ?? null,
       spotifyUrl: sp?.spotifyUrl ?? null,
       artUrl: sp?.art ?? null,
+      youtubeId: (sid && ytMap[sid]?.[0]) || null,
+      youtubeConf: (sid && ytMap[sid]?.[1]) || null,
       // audio features (from the dataset)
       tempo: f?.tempo ?? null, songKey: f?.key ?? null, songMode: f?.mode ?? null,
       danceability: f?.danceability ?? null, energy: f?.energy ?? null, valence: f?.valence ?? null,

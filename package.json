@@ -12,6 +12,7 @@
     "check:profiles": "esbuild scripts/checkProfiles.ts --bundle --platform=node --format=esm | node --input-type=module",
     "check:normalize": "esbuild scripts/checkNormalize.ts --bundle --platform=node --format=esm | node --input-type=module",
     "check:chordonomicon": "esbuild scripts/checkChordonomicon.ts --bundle --platform=node --format=esm | node --input-type=module",
+    "check:youtube-import": "esbuild scripts/checkYoutubeImport.ts --bundle --platform=node --format=esm --external:better-sqlite3 --outfile=.check-yt.mjs && node .check-yt.mjs",
     "enrich:spotify": "esbuild scripts/enrichSpotify.ts --bundle --platform=node --format=esm | node --input-type=module",
     "build:catalog": "esbuild scripts/buildCatalog.ts --bundle --platform=node --format=esm --external:better-sqlite3 | node --input-type=module"
   },

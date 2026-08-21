@@ -7,5 +7,5 @@
     "allowSyntheticDefaultImports": true,
     "strict": true
   },
-  "include": ["vite.config.ts", "scripts/spotifyPlaylistProxy.ts"]
+  "include": ["vite.config.ts", "scripts/spotifyPlaylistProxy.ts", "scripts/youtubePlaylistProxy.ts"]
 }
