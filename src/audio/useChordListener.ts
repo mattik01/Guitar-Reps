@@ -55,8 +55,11 @@ export function useChordListener(opts: {
   filterLpRef.current = opts.filterLpHz ?? 7000;
   // Re-run the targets effect only when the chord set (or its calibrated
   // thresholds) actually changes.
+  // typicalSim MUST be in this key: it is exactly what a profile-derived target
+  // changes, and a change that isn't in the key never reaches the listener.
   const targetsKey = useMemo(
-    () => targets.map(t => `${t.id}:${t.matchThreshold ?? ''}:${t.unsureThreshold ?? ''}`).join(' '),
+    () => targets.map(t =>
+      `${t.id}:${t.matchThreshold ?? ''}:${t.unsureThreshold ?? ''}:${t.typicalSim ?? ''}`).join(' '),
     [targets]
   );
 

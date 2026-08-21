@@ -120,6 +120,48 @@ export function activePitchClassCount(chroma: Float32Array, rel = 0.25): number 
   return n;
 }
 
+/**
+ * Pearson correlation of two chroma vectors = cosine similarity after removing
+ * each vector's mean.
+ *
+ * Why this exists: plain cosine between two NON-NEGATIVE vectors that share a
+ * large common component is high no matter what the peaks do. A chroma vector
+ * captured from a real guitar carries a broadband "rig signature" — harmonics,
+ * room, strings ringing through — on every pitch class, and that signature is
+ * the SAME for every chord played on that rig. So a learned prototype scored with
+ * plain cosine matches every chord you play, while the sparse theoretical
+ * template still discriminates. Centering removes that shared component, so only
+ * the chord-identifying peaks are compared.
+ */
+export function centeredCosineSim(a: Float32Array, b: Float32Array): number {
+  const n = Math.min(a.length, b.length);
+  let ma = 0, mb = 0;
+  for (let i = 0; i < n; i++) { ma += a[i]; mb += b[i]; }
+  ma /= n; mb /= n;
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < n; i++) {
+    const x = a[i] - ma, y = b[i] - mb;
+    dot += x * y; na += x * x; nb += y * y;
+  }
+  if (na <= 0 || nb <= 0) return 0; // a perfectly flat vector identifies nothing
+  return dot / Math.sqrt(na * nb);
+}
+
+/**
+ * How "peaked" a chroma vector is: the standard deviation of its unit-normalized
+ * bins. A flat vector (≈0) carries no chord identity and must not be used as a
+ * learned reference.
+ */
+export function chromaSpread(v: Float32Array): number {
+  const u = l2Normalize(v);
+  let m = 0;
+  for (let i = 0; i < u.length; i++) m += u[i];
+  m /= u.length;
+  let acc = 0;
+  for (let i = 0; i < u.length; i++) acc += (u[i] - m) * (u[i] - m);
+  return Math.sqrt(acc / u.length);
+}
+
 export type Verdict = 'match' | 'unsure' | 'nomatch';
 
 /**
@@ -150,14 +192,27 @@ export const CAL_MAX_SAMPLES = 20; // (legacy auto-calibration) keep only the mo
 // Studio profiles keep EVERY clean sample (nothing discarded) and derive clusters
 // from the full set — this is only a high safety bound against pathological growth.
 export const CAL_SAMPLE_CAP = 500;
-// Match threshold sits just under the 25th percentile of confirmed sims: most
-// correct strums pass, and a few weak/misrecorded samples can't drag it down.
-export const CAL_QUANTILE = 0.25;
-export const CAL_MARGIN = 0.94; // match = quantile × this (a bit of slack)
+// Match threshold sits under the 10th percentile of the calibration sims.
+//
+// RETUNED 2026-08-20 from real-guitar data. These were originally q25 × 0.94,
+// tuned for plain cosine — whose values bunch tightly near the top. Similarities
+// are now CENTERED correlations against the learned prototype (see
+// centeredCosineSim), and that distribution is far WIDER: a real 21-sample E
+// profile spanned 0.50–0.98. q25 × 0.94 landed at 0.844, which only 76% of the
+// user's OWN calibration samples cleared — live strums passed about half the
+// time, while wrong chords were scoring ≤ 0.15. Enormous headroom, unusable
+// recall. Going lower costs nothing in discrimination and buys back the recall.
+//
+// Recall is also the right thing to favour here: a false "sounded right" is
+// caught the moment you look at the diagram, whereas being told you played it
+// wrong when you didn't is both useless and demoralising.
+export const CAL_QUANTILE = 0.10;
+export const CAL_MARGIN = 0.90; // match = quantile × this (a bit of slack)
 export const CAL_UNSURE_FACTOR = 0.85; // unsure = match × this
 // Drift guards: never lax enough to match everything, never stricter than a
-// near-perfect strum could satisfy.
-export const CAL_MATCH_MIN = 0.5;
+// near-perfect strum could satisfy. The floor is well clear of the ~0.15 that
+// genuinely wrong chords score on the centered scale.
+export const CAL_MATCH_MIN = 0.35;
 export const CAL_MATCH_MAX = 0.9;
 
 // A calibration sample: the similarity a confirmed-correct strum achieved,
@@ -233,6 +288,58 @@ export function typicalSimilarity(sims: CalSample[]): number | null {
   return weightedQuantile(samples, 0.5);
 }
 
+// ---- ambient chroma floor ----------------------------------------------------
+//
+// Steady room noise lands in NOTE bins, not just between them. Measured on a
+// real laptop rig: fan rumble put a broad 60-200 Hz hump straight into the
+// chroma, and because fan RPM tracks CPU load, the pitch class it landed on
+// MOVED (G at idle, F# under load, F#/G/A smeared in powersaver). A calibrated
+// profile absorbs a CONSTANT rig signature but not a migrating one, so the
+// floor has to be tracked live instead of measured once.
+//
+// Same asymmetry as the other floors in the engine: fall fast so the floor
+// converges during the silence between strums, rise slowly so a ringing chord
+// (or a long practice session) cannot drag it up and get itself subtracted.
+export const CHROMA_FLOOR_FALL_ALPHA = 0.1;
+export const CHROMA_FLOOR_RISE_ALPHA = 0.002;
+// Fraction of the tracked floor actually removed. Below 1 deliberately: the
+// floor min-tracks, so it already sits at or below the true mean noise, and
+// over-subtraction would carve real harmonics out of quiet chord tones.
+// Under-subtracting leaves a little noise; over-subtracting destroys signal.
+export const CHROMA_FLOOR_SUBTRACT = 0.9;
+
+/**
+ * Update `floor` toward `frame` in place (asymmetric min-tracking EMA) and
+ * return a NEW frame with the floor subtracted, clamped at zero.
+ *
+ * `learn` gates only the UPDATE, never the subtraction. Pass false while a
+ * chord is actually sounding: drilling one chord for a minute (exactly what the
+ * quiz and new-chord routines ask for) keeps the same bins lit continuously, and
+ * a floor that kept learning through that would slowly rise into the chord and
+ * subtract it away. Learning during the silence between strums is enough — the
+ * room does not change while the chord rings.
+ *
+ * Pure and allocation-light so the engine can call it per audio tick and
+ * `check:profiles` can assert it without a microphone. `frame` is not mutated.
+ */
+export function applyChromaFloor(
+  frame: Float32Array,
+  floor: Float32Array,
+  learn = true,
+  subtract = CHROMA_FLOOR_SUBTRACT,
+): Float32Array {
+  const out = new Float32Array(12);
+  for (let pc = 0; pc < 12; pc++) {
+    if (learn) {
+      const alpha = frame[pc] < floor[pc] ? CHROMA_FLOOR_FALL_ALPHA : CHROMA_FLOOR_RISE_ALPHA;
+      floor[pc] += alpha * (frame[pc] - floor[pc]);
+    }
+    // A bin quieter than its own floor is noise, not negative signal.
+    out[pc] = Math.max(0, frame[pc] - subtract * floor[pc]);
+  }
+  return out;
+}
+
 // ---- cleanliness (v1, heuristic) ----------------------------------------------
 //
 // A 0–100 "how clean did that strum sound" score, decomposed into the four
@@ -249,9 +356,19 @@ export function typicalSimilarity(sims: CalSample[]): number | null {
 // is doubled elsewhere (e.g. high-E in C major) is invisible — that needs
 // per-note transcription (v2). Purely informational — never gates anything.
 
-// An expected pitch class counts as "present" at ≥ this fraction of the
-// strongest expected pitch class.
-export const CLEAN_COMPLETENESS_REL = 0.3;
+// How "present" an expected pitch class is ramps smoothly from 0 to 1 between
+// these two fractions of the MEAN expected-tone magnitude. Two deliberate
+// choices, both from real profiles (see docs/mic-calibration.md):
+//   * the reference is the MEAN, not the loudest tone — a chord whose root is
+//     doubled and open (Am: open A + G-string 2nd fret) dominates its own
+//     chroma, and a max-relative bar punishes it for that;
+//   * it is a RAMP, not a step — a weak-but-audible note used to score exactly
+//     the same as silence, which cost Am 23 of the 35 completeness points in
+//     one cliff.
+// The band is set so a genuinely dead string still scores ~0: this softens the
+// artifact without hiding a real fault.
+export const CLEAN_COMPLETENESS_LO = 0.10;
+export const CLEAN_COMPLETENESS_HI = 0.45;
 // Template support below this is treated as "not part of the chord" for purity.
 export const CLEAN_SUPPORT_EPS = 0.02;
 // Sustain ratio at which the sustain component saturates to 1 (a clean open
@@ -272,6 +389,18 @@ export type Cleanliness = {
 };
 
 /**
+ * How much an expected tone counts as "ringing", given its magnitude as a
+ * fraction of the mean expected tone. Smoothstep across the ramp band, so
+ * completeness degrades gracefully instead of falling off a cliff.
+ */
+export function presence(ratio: number): number {
+  const t = (ratio - CLEAN_COMPLETENESS_LO) / (CLEAN_COMPLETENESS_HI - CLEAN_COMPLETENESS_LO);
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  return t * t * (3 - 2 * t);
+}
+
+/**
  * Heuristic cleanliness of a strum, judged against the chord it most likely
  * was. `chroma` is the post-onset window chroma (unit norm), `expectedPcs` the
  * chord's distinct sounding pitch classes, `template` its full template
@@ -286,12 +415,16 @@ export function computeCleanliness(
   tonality: number,
   sustainRatio: number,
 ): Cleanliness {
-  // completeness: every expected pitch class should ring
-  let maxExpected = 0;
-  for (const pc of expectedPcs) if (chroma[pc] > maxExpected) maxExpected = chroma[pc];
+  // completeness: every expected pitch class should ring, judged against the
+  // mean expected tone on a smooth ramp (see the constants above)
+  let sumExpected = 0;
+  for (const pc of expectedPcs) sumExpected += chroma[pc];
+  const refExpected = expectedPcs.length > 0 ? sumExpected / expectedPcs.length : 0;
   let present = 0;
-  if (maxExpected > 0) {
-    for (const pc of expectedPcs) if (chroma[pc] >= CLEAN_COMPLETENESS_REL * maxExpected) present++;
+  if (refExpected > 0) {
+    for (const pc of expectedPcs) {
+      present += presence(chroma[pc] / refExpected);
+    }
   }
   const completeness = expectedPcs.length > 0 ? present / expectedPcs.length : 0;
 

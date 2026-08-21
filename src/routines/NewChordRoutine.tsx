@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ChordDiagram } from '../components/ChordDiagram';
+import { ChordCard } from '../components/ChordCard';
 import { ChordEditor } from '../components/ChordEditor';
 import { LibraryChordGrid } from '../components/LibraryChordGrid';
 import { CHORD_LIBRARY, materializeLibraryChord } from '../data/chordLibrary';
+import { cardFromChord } from '../data/chordResolve';
 import type { ChordCategoryId } from '../data/chordCategories';
 import { useFingeringChoice, useRepertoire, type Chord, type ChordShape } from '../state/store';
 
@@ -71,6 +72,7 @@ export default function NewChordRoutine() {
         {editing ? (
           <ChordEditor
             title={`Edit ${justAdded.name}`}
+            calibratedChordId={justAdded.id}
             initialName={justAdded.name}
             initialShape={justAdded.shape}
             saveLabel="Save changes"
@@ -81,7 +83,8 @@ export default function NewChordRoutine() {
           <div className="card" style={{ textAlign: 'center' }}>
             <p>Take a minute to look at the shape, place your fingers, and strum it a few times.</p>
             <div style={{ margin: '16px 0' }}>
-              <ChordDiagram shape={justAdded.shape} size={260} />
+              {/* The page <h1> already names the chord. */}
+              <ChordCard variant="bare" size="xl" chord={cardFromChord(justAdded)} showName={false} />
             </div>
             <div className="footer-bar" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
               <Link to={`/routine/quiz?chord=${encodeURIComponent(justAdded.id)}`} className="button primary big">

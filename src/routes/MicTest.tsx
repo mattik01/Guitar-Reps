@@ -3,10 +3,10 @@ import { Link } from 'react-router-dom';
 import { MicMeter } from '../components/MicMeter';
 import { MicDiagnostics, strumLogDetail, type MicLogEntry } from '../components/MicDiagnostics';
 import { CHORD_LIBRARY, libraryPrimaryShape } from '../data/chordLibrary';
-import { calibratedThresholds, typicalSimilarity } from '../audio/chroma';
 import { useChordListener } from '../audio/useChordListener';
 import type { StrumEvent } from '../audio/chordListener';
-import { useMicCalibration, useMicSettings } from '../state/store';
+import { chordTargetFromProfile } from '../audio/calibration';
+import { useChordProfiles, useMicSettings } from '../state/store';
 
 // Debug/calibration page (URL-only: /mic-test). This is where the detection
 // constants in src/audio/chroma.ts + chordListener.ts get tuned against a real
@@ -19,7 +19,7 @@ export default function MicTest() {
   const [targetA, setTargetA] = useState(CHORD_LIBRARY[0]?.id ?? '');
   const [targetB, setTargetB] = useState(CHORD_LIBRARY[1]?.id ?? '');
   const [log, setLog] = useState<MicLogEntry[]>([]);
-  const [calibration] = useMicCalibration();
+  const [profiles] = useChordProfiles();
   const [micSettings] = useMicSettings();
 
   const names = useMemo(() => new Map(CHORD_LIBRARY.map(c => [c.id, c.name])), []);
@@ -29,17 +29,19 @@ export default function MicTest() {
       .map(id => CHORD_LIBRARY.find(c => c.id === id))
       .filter((c): c is NonNullable<typeof c> => !!c)
       .map(c => {
-        const sims = calibration[c.id]?.sims ?? [];
-        const th = calibratedThresholds(sims);
+        // /mic-test is a raw-engine bench, so it still feeds the listener directly —
+        // but with the numbers LEARNED in the Calibration Studio.
+        const shape = libraryPrimaryShape(c);
+        const t = chordTargetFromProfile(c.id, shape, profiles[c.id]?.samples ?? []);
         return {
           id: c.id,
-          shape: libraryPrimaryShape(c),
-          matchThreshold: th?.match,
-          unsureThreshold: th?.unsure,
-          typicalSim: typicalSimilarity(sims) ?? undefined,
+          shape,
+          matchThreshold: t.matchThreshold,
+          unsureThreshold: t.unsureThreshold,
+          typicalSim: t.typicalSim,
         };
       });
-  }, [targetA, targetB, calibration]);
+  }, [targetA, targetB, profiles]);
 
   function pushLog(entry: MicLogEntry) {
     setLog(prev => [entry, ...prev].slice(0, 80));

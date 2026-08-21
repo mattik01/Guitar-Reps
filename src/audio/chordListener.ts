@@ -26,6 +26,7 @@ import {
   computeCleanliness,
   cosineSim,
   foldSpectrumToChroma,
+  applyChromaFloor,
   l2Normalize,
   verdictForSimilarity,
   type Cleanliness,
@@ -170,6 +171,8 @@ export class ChordListener {
   private userGateRms = 0; // user activation threshold as a linear-RMS floor; 0 = off
   private betweenFloor = -1; // -1 = uninitialized; first frame sets it directly
   private buzzFloor = -1;
+  // Per-pitch-class ambient floor; null = uninitialized (first frame seeds it).
+  private chromaFloor: Float32Array | null = null;
   private level = 0;
   private lastOnsetAt = -Infinity;
   private lastStrumAt = -Infinity;
@@ -261,6 +264,12 @@ export class ChordListener {
     return this.liveChroma;
   }
 
+  /** The ambient per-pitch-class floor currently being subtracted (raw, not
+   *  normalized). Diagnostics only — shows what the room is contributing. */
+  getChromaFloor(): Float32Array {
+    return this.chromaFloor ?? new Float32Array(12);
+  }
+
   /** Live magnitude spectrum (dB per bin) from the RAW pre-filter tap — so the
    *  filter tuning UI can show the rumble/hiss you're deciding whether to cut,
    *  independent of whether the filter is currently on. */
@@ -322,6 +331,7 @@ export class ChordListener {
       this.noiseFloorRms = 0.001;
       this.betweenFloor = -1;
       this.buzzFloor = -1;
+      this.chromaFloor = null;
       this.lastOnsetAt = this.lastStrumAt = this.lastKnockAt = -Infinity;
       this.pending = [];
 
@@ -425,8 +435,18 @@ export class ChordListener {
     chroma.getFloatFrequencyData(this.chromaSpec);
     const frame = new Float32Array(12);
     const betweenEnergy = foldSpectrumToChroma(this.chromaSpec, sr, CHROMA_FFT_SIZE, frame);
+    // Ambient floor per pitch class, then subtract it. Steady noise sits in note
+    // bins too (see CHROMA_FLOOR_* above), and everything downstream — matching,
+    // cleanliness, calibration samples — reads this frame, so it is subtracted
+    // once, here, rather than compensated for in each consumer.
+    if (!this.chromaFloor) this.chromaFloor = frame.slice();
+    // Learn the floor only while nothing is sounding — same "silence between
+    // strums" idea the RMS noise floor uses, and it keeps a drilled chord from
+    // slowly teaching the floor to erase it.
+    const quiet = rms < NOISE_GATE_RATIO * this.noiseFloorRms && this.pending.length === 0;
+    const clean = applyChromaFloor(frame, this.chromaFloor, quiet);
     let frameEnergy = 0;
-    for (let pc = 0; pc < 12; pc++) frameEnergy += frame[pc];
+    for (let pc = 0; pc < 12; pc++) frameEnergy += clean[pc];
     // Buzz-band energy (above the chroma range) — sustained content up here
     // after the attack is the signature of fret buzz/rattle.
     const hzPerChromaBin = sr / CHROMA_FFT_SIZE;
@@ -440,7 +460,7 @@ export class ChordListener {
     this.buzzFloor += (buzzEnergy < this.buzzFloor ? BAND_FLOOR_FALL_ALPHA : BAND_FLOOR_RISE_ALPHA) * (buzzEnergy - this.buzzFloor);
     const betweenExcess = Math.max(0, betweenEnergy - this.betweenFloor);
     const buzzExcess = Math.max(0, buzzEnergy - this.buzzFloor);
-    this.liveChroma = l2Normalize(frame.slice());
+    this.liveChroma = l2Normalize(clean.slice());
     for (let i = this.pending.length - 1; i >= 0; i--) {
       const p = this.pending[i];
       const age = now - p.at;
@@ -448,7 +468,7 @@ export class ChordListener {
         if (rms > p.rmsPeak) p.rmsPeak = rms;
         p.rmsEnd = rms;
         if (age >= POST_ONSET_START_MS) {
-          for (let pc = 0; pc < 12; pc++) p.accum[pc] += frame[pc];
+          for (let pc = 0; pc < 12; pc++) p.accum[pc] += clean[pc];
           p.toneAccum += frameEnergy;
           p.noiseAccum += betweenExcess + BUZZ_BAND_WEIGHT * buzzExcess;
           p.frames++;

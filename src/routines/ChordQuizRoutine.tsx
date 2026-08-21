@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ChordDiagram } from '../components/ChordDiagram';
+import { ChordCard } from '../components/ChordCard';
+import { cardFromChord } from '../data/chordResolve';
 import { ChordEditor } from '../components/ChordEditor';
 import { CleanlinessBadge } from '../components/CleanlinessBadge';
 import { MicDiagnostics, strumLogDetail, type MicLogEntry } from '../components/MicDiagnostics';
@@ -9,8 +10,11 @@ import { MicInputTuning } from '../components/MicInputTuning';
 import { MicSettingsToggles } from '../components/MicSettingsToggles';
 import { useChordListener } from '../audio/useChordListener';
 import type { KnockEvent, StrumEvent } from '../audio/chordListener';
-import { calibratedThresholds, calSampleWeight, type Cleanliness, type Verdict } from '../audio/chroma';
-import { clearMicCalibration, recordCalibrationSample, useMicCalibration, useMicSettings, useRepertoire, useRoutineLog, type Chord, type ChordShape } from '../state/store';
+import { type Cleanliness, type Verdict } from '../audio/chroma';
+import { chordTargetFromProfile, shapeKey } from '../audio/calibration';
+import { checkSignal, signalFromStrum } from '../audio/signalContract';
+import { useCalibrationGate } from '../audio/useCalibrationGate';
+import { useChordProfiles, useFingeringChoice, useMicSettings, useRepertoire, useRoutineLog, type Chord, type ChordShape } from '../state/store';
 import { libraryChordById, materializeLibraryChord } from '../data/chordLibrary';
 import type { ChordCategoryId } from '../data/chordCategories';
 
@@ -39,8 +43,12 @@ export default function ChordQuizRoutine() {
   const [preview, setPreview] = useState(false);
 
   // --- microphone auto-reveal ---
+  const [fingeringChoice] = useFingeringChoice();
+  // Read inside the mount-only deep-link effect without widening its deps.
+  const fingeringChoiceRef = useRef(fingeringChoice);
+  fingeringChoiceRef.current = fingeringChoice;
   const [micSettings, setMicSettings] = useMicSettings();
-  const [calibration] = useMicCalibration();
+  const [profiles] = useChordProfiles();
   const [verdict, setVerdict] = useState<Verdict | null>(null);
   const [strumClean, setStrumClean] = useState<Cleanliness | null>(null);
   const [strumRevealed, setStrumRevealed] = useState(false); // reveal came from a strum
@@ -57,16 +65,18 @@ export default function ChordQuizRoutine() {
   const questionShownAtRef = useRef(0);
   const previewRef = useRef(preview);
   previewRef.current = preview;
-  // Similarity the revealing strum scored against the target — recorded as a
-  // calibration sample if the user confirms "✓ Got it".
-  const lastStrumSimRef = useRef<number | null>(null);
+  // The mic callback lives behind a ref inside useChordListener, so read the
+  // current target through a ref rather than closing over a stale render.
+  const profileTargetRef = useRef<ReturnType<typeof chordTargetFromProfile> | null>(null);
 
   useEffect(() => {
     const presetId = params.get('chord');
     if (!presetId || phase !== 'picking') return;
     const c = repertoire.find(r => r.id === presetId);
     if (c) { ask(c); return; }                    // already owned → quiz as normal
-    const lib = materializeLibraryChord(presetId);
+    // Honor the user's saved fingering choice, so a deep-linked preview shows the
+    // same voicing the Chords page and the Calibration Studio use.
+    const lib = materializeLibraryChord(presetId, fingeringChoiceRef.current[presetId] ?? 0);
     if (lib) { ask(lib, true); return; }          // in the library, not owned → preview + offer to add
     setRegisterId(presetId);                       // not in the library at all → register it manually
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -92,31 +102,53 @@ export default function ChordQuizRoutine() {
   }, [repertoire, chord]);
 
   const chordNames = useMemo(() => new Map(repertoire.map(c => [c.id, c.name])), [repertoire]);
+  const repertoireGate = useCalibrationGate(repertoire.map(c => c.id));
+  const calibratedCount = repertoire.length - repertoireGate.blocking.length;
   function pushDebug(entry: MicLogEntry) {
     setDebugLog(prev => [entry, ...prev].slice(0, 80));
   }
 
-  const micTargets = useMemo(() => {
-    if (!chord) return [];
-    // Use this chord's learned thresholds once it has enough confirmed samples.
-    const th = calibratedThresholds(calibration[chord.id]?.sims ?? []);
-    return [{ id: chord.id, shape: chord.shape, matchThreshold: th?.match, unsureThreshold: th?.unsure }];
-  }, [chord, calibration]);
+  // The listener only ever matches the theoretical template, so it gets a bare
+  // target; every verdict is decided caller-side against the LEARNED profile via
+  // the signal contract (exactly what the Calibration Studio does).
+  const micTargets = useMemo(
+    () => (chord ? [{ id: chord.id, shape: chord.shape }] : []),
+    [chord]
+  );
+  const profileTarget = useMemo(
+    () => (chord ? chordTargetFromProfile(chord.id, chord.shape, profiles[chord.id]?.samples ?? []) : null),
+    [chord, profiles]
+  );
+
+  profileTargetRef.current = profileTarget;
+
+  // Calibration gate: auto-reveal needs THIS chord calibrated. Under-calibrated
+  // chords don't get a degraded mic — they fall back to the reveal button.
+  const gate = useCalibrationGate(
+    [chord?.id],
+    useMemo(() => (chord ? { [chord.id]: shapeKey(chord.shape) } : {}), [chord])
+  );
+  const blocked = gate.blocking[0] ?? null;
+
   // Keep the mic open across the whole quiz session (asking AND revealed —
   // revealed needs it for the double-knock override); events are gated below.
-  const micActive = micSettings.enabled && phase !== 'picking' && chord != null;
+  const micActive = micSettings.enabled && gate.ready && phase !== 'picking' && chord != null;
 
   function handleStrum(e: StrumEvent) {
     if (micSettings.debug) pushDebug({ at: e.at, kind: 'strum', detail: strumLogDetail(e) });
     if (phaseRef.current !== 'asking' || editingRef.current) return;
     if (Date.now() - questionShownAtRef.current < QUIZ_ARM_DELAY_MS) return;
-    lastStrumSimRef.current = e.matches[0]?.similarity ?? null;
+    // Judge against the chord's LEARNED reference + calibrated thresholds. The
+    // engine's own e.verdict only ever knows the theoretical template.
+    const target = profileTargetRef.current;
+    if (!target) return;
+    const check = checkSignal(signalFromStrum(e), target);
     setStrumClean(e.cleanliness);
-    setVerdict(e.verdict);
+    setVerdict(check.verdict);
     setStrumRevealed(true);
     // Preview chords have Add/Don't-add (no Got/Didn't), so skip the auto-advance countdown.
     if (!previewRef.current) {
-      setSelected(e.verdict === 'match' ? 'got' : 'not');
+      setSelected(check.verdict === 'match' ? 'got' : 'not');
       setCountdown(QUIZ_AUTO_ADVANCE_S);
     }
     setPhase('revealed');
@@ -166,7 +198,6 @@ export default function ChordQuizRoutine() {
     setCountdown(null);
     setKnockFlipped(false);
     questionShownAtRef.current = Date.now();
-    lastStrumSimRef.current = null;
     setDebugLog([]);
   }
 
@@ -205,10 +236,7 @@ export default function ChordQuizRoutine() {
 
   function saveEdit(value: { name: string; shape: ChordShape }) {
     if (!chord) return;
-    // Calibration samples describe the old shape — drop them if it changed.
-    if (JSON.stringify(value.shape) !== JSON.stringify(chord.shape)) {
-      clearMicCalibration(chord.id);
-    }
+    // (ChordEditor clears the calibration profile itself when the shape changed.)
     setRepertoire(prev => prev.map(c =>
       c.id === chord.id ? { ...c, name: value.name, shape: value.shape } : c
     ));
@@ -221,18 +249,6 @@ export default function ChordQuizRoutine() {
       setRepertoire(prev => prev.map(c =>
         c.id === chord.id ? { ...c, perfectReps: c.perfectReps + 1 } : c
       ));
-      // "Got it" with the diagram in view = a confirmed-correct strum: record
-      // its similarity so this chord's verdict thresholds calibrate to how it
-      // actually sounds on this guitar/mic. Overrides of a wrong "didn't
-      // match" verdict are the most valuable samples here. Weighted by the
-      // strum's cleanliness — a muddy strum's similarity is depressed by the
-      // mud and says little about the chord's true level (too-dirty strums
-      // are skipped entirely: calSampleWeight returns null).
-      const sim = lastStrumSimRef.current;
-      if (micSettings.calibrate && strumRevealed && sim != null) {
-        const weight = calSampleWeight(strumClean?.score);
-        if (weight != null) recordCalibrationSample(chord.id, sim, weight);
-      }
     }
     setGotRight(g => g + 1);
     askRandom();
@@ -325,13 +341,26 @@ export default function ChordQuizRoutine() {
               micLabel="🎙 Auto-reveal when I strum" />
           </div>
           <hr style={{ border: 0, borderTop: '1px solid var(--line)', margin: '16px 0' }} />
-          <h3>Or pick a specific chord</h3>
+          <div className="row">
+            <h3 style={{ margin: 0 }}>Or pick a specific chord</h3>
+            <div className="spacer" />
+            <span className="muted">
+              {calibratedCount} of {repertoire.length} calibrated
+              {calibratedCount < repertoire.length && ' — the rest reveal by button'}
+            </span>
+            <Link to="/calibrate" className="button">🎯 Calibrate</Link>
+          </div>
           <div className="grid">
             {repertoire.map(c => (
-              <div key={c.id} className="chord-card" onClick={() => ask(c)} style={{ cursor: 'pointer' }}>
-                <div className="name">{c.name}</div>
-                <div className="meta">{c.perfectReps} reps</div>
-              </div>
+              // diagram="none" is LOAD-BEARING: this is a memory quiz, so showing
+              // the shape here would give away the answer before it's asked.
+              <ChordCard
+                key={c.id}
+                chord={cardFromChord(c)}
+                diagram="none"
+                meta={`${c.perfectReps} reps`}
+                onClick={() => ask(c)}
+              />
             ))}
           </div>
         </div>
@@ -370,15 +399,35 @@ export default function ChordQuizRoutine() {
                 <div style={{ maxWidth: 460, margin: '0 auto 8px' }}>
                   <MicInputTuning getLevel={mic.getLevel} state={mic.state} compact />
                 </div>
-                {micSettings.calibrate && (
-                  <p className="muted" style={{ marginTop: 0 }}>
-                    🎯 Auto-calibration is on — play as cleanly as you can, in a quiet room.
-                  </p>
-                )}
               </>
             )}
             {micActive && (mic.state === 'denied' || mic.state === 'error') && (
               <p className="muted">🎙 {mic.error ?? 'Mic unavailable'} — reveal by button as usual.</p>
+            )}
+            {/* Calibration gate: rather than auto-revealing on a chord the app
+                can't reliably recognize, say so, offer the fix, and fall back to
+                the button (which is always rendered below). */}
+            {micSettings.enabled && blocked && chord && (
+              <div className="gate-note">
+                <div>
+                  🎙 Auto-reveal is off for <strong>{chord.name}</strong> —{' '}
+                  {blocked.reason === 'shape-changed'
+                    ? 'its shape changed since it was calibrated.'
+                    : blocked.score > 0
+                      ? `it's only calibrated to ${blocked.score}/100.`
+                      : "it isn't calibrated yet."}
+                </div>
+                <div className="row" style={{ justifyContent: 'center', marginTop: 8 }}>
+                  <Link className="button primary" to={`/calibrate/${encodeURIComponent(chord.id)}`}>
+                    🎯 Calibrate {chord.name}
+                  </Link>
+                  <span className="muted">
+                    {blocked.samplesLeft > 0
+                      ? `about ${blocked.samplesLeft} clean strum${blocked.samplesLeft === 1 ? '' : 's'}`
+                      : 'recalibrate it'}{' '}· or reveal with the button as usual.
+                  </span>
+                </div>
+              </div>
             )}
             <div className="footer-bar" style={{ justifyContent: 'center' }}>
               <button className="button primary huge" onClick={reveal} style={{ maxWidth: 420 }}>
@@ -403,16 +452,23 @@ export default function ChordQuizRoutine() {
                 )}
               </>
             )}
-            <div style={{ margin: '24px 0', position: 'relative' }}>
-              <ChordDiagram shape={chord.shape} size={240} />
-              <button
-                className="button"
-                onClick={() => { setCountdown(null); setEditing(v => !v); }}
-                style={{ position: 'absolute', top: 0, right: 0 }}
-                title="Edit this chord"
-              >
-                ✏️ Edit
-              </button>
+            <div style={{ margin: '24px 0' }}>
+              {/* The 96px prompt above already names the chord. */}
+              <ChordCard
+                variant="bare"
+                size="lg"
+                chord={cardFromChord(chord)}
+                showName={false}
+                actions={
+                  <button
+                    className="button"
+                    onClick={() => { setCountdown(null); setEditing(v => !v); }}
+                    title="Edit this chord"
+                  >
+                    ✏️ Edit
+                  </button>
+                }
+              />
             </div>
             {!editing && (preview ? (
               <>
@@ -452,6 +508,7 @@ export default function ChordQuizRoutine() {
       {editing && phase === 'revealed' && (
         <ChordEditor
           title={`Edit ${chord.name}`}
+          calibratedChordId={chord.id}
           initialName={chord.name}
           initialShape={chord.shape}
           saveLabel="Save changes"

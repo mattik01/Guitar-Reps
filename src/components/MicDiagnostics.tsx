@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { calibratedThresholds, chordTemplate, cosineSim, totalSampleWeight, typicalSimilarity } from '../audio/chroma';
+import { chordTemplate, cosineSim } from '../audio/chroma';
 import type { ListenerState, StrumEvent } from '../audio/chordListener';
-import { useMicCalibration, useMicSettings, type ChordShape } from '../state/store';
+import { chordTargetFromProfile, profileScore, totalWeight, CAL_MIN_SCORE } from '../audio/calibration';
+
+// A profile can exist for a chord that isn't one of the current targets, so we
+// have no shape to rebuild its template from. The learned numbers below come from
+// the samples, not the shape, so an all-muted placeholder is enough.
+const EMPTY_SHAPE: ChordShape = { frets: ['x', 'x', 'x', 'x', 'x', 'x'], fingers: [null, null, null, null, null, null] };
+import { useChordProfiles, useMicSettings, type ChordShape } from '../state/store';
 import { MicInputTuning } from './MicInputTuning';
 
 // The /mic-test diagnostic panels, extracted so the exercises can show the exact
@@ -42,7 +48,7 @@ export function MicDiagnostics({ getLiveChroma, getLevel, state, targets, log, n
   getSpectrum?: () => Float32Array;
   getSpectrumMeta?: () => { sampleRate: number; fftSize: number };
 }) {
-  const [calibration, setCalibration] = useMicCalibration();
+  const [profiles, setProfiles] = useChordProfiles();
   const [micSettings] = useMicSettings();
   const threshold = micSettings.activationThreshold ?? 0;
   const thresholdRef = useRef(threshold);
@@ -113,24 +119,33 @@ export function MicDiagnostics({ getLiveChroma, getLevel, state, targets, log, n
           </div>
         )}
 
-        {Object.keys(calibration).length > 0 && (
+        {Object.keys(profiles).length > 0 && (
           <div className="card" style={{ marginTop: 12 }}>
             <div className="row">
-              <h3 style={{ margin: 0 }}>🎯 Auto-calibration</h3>
+              <h3 style={{ margin: 0 }}>🎯 Calibration profiles</h3>
               <div className="spacer" />
-              <button className="button" onClick={() => setCalibration({})}>Reset all</button>
+              <button
+                className="button danger"
+                onClick={() => {
+                  // Far more valuable than the old passive samples were — every one
+                  // of these is a chord the user deliberately sat down and played.
+                  if (confirm('Delete EVERY chord calibration profile? This cannot be undone.')) setProfiles({});
+                }}
+              >Reset all</button>
             </div>
             <div className="col" style={{ marginTop: 8 }}>
-              {Object.entries(calibration).map(([id, entry]) => {
-                const th = calibratedThresholds(entry.sims);
-                const typ = typicalSimilarity(entry.sims);
+              {Object.entries(profiles).map(([id, profile]) => {
+                const samples = profile?.samples ?? [];
+                const score = profileScore(samples);
+                const t = chordTargetFromProfile(id, targets.find(x => x.id === id)?.shape ?? EMPTY_SHAPE, samples);
                 return (
                   <div key={id} className="row" style={{ borderTop: '1px solid var(--line)', paddingTop: 6 }}>
                     <div style={{ fontWeight: 700, minWidth: 80 }}>{nameFor(id)}</div>
                     <div className="muted" style={{ fontFamily: 'monospace', fontSize: 13 }}>
-                      {entry.sims.length} sample{entry.sims.length === 1 ? '' : 's'} (Σw {totalSampleWeight(entry.sims).toFixed(1)})
-                      {th
-                        ? ` · match ≥ ${th.match.toFixed(3)} · unsure ≥ ${th.unsure.toFixed(3)} · typical ${typ?.toFixed(3)}`
+                      <span style={{ color: score >= CAL_MIN_SCORE ? 'var(--good)' : 'var(--warn)' }}>{score}/100</span>
+                      {' · '}{samples.length} sample{samples.length === 1 ? '' : 's'} (Σw {totalWeight(samples).toFixed(1)})
+                      {t.matchThreshold != null
+                        ? ` · match ≥ ${t.matchThreshold.toFixed(3)} · unsure ≥ ${(t.unsureThreshold ?? 0).toFixed(3)} · typical ${(t.typicalSim ?? 0).toFixed(3)}`
                         : ' · not enough evidence yet'}
                     </div>
                   </div>

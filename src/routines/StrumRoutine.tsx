@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ChordDiagram } from '../components/ChordDiagram';
+import { ChordCard } from '../components/ChordCard';
+import { cardFromChord } from '../data/chordResolve';
 import { PATTERNS, PROGRESSIONS } from '../data/progressions';
 import { useRepertoire, useRoutineLog } from '../state/store';
 
@@ -140,13 +141,12 @@ export default function StrumRoutine() {
           <>
             <div className="row" style={{ justifyContent: 'center', margin: '16px 0' }}>
               {currentChord && (
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: 28, fontWeight: 800 }}>{currentChord.name}</div>
-                  <ChordDiagram shape={currentChord.shape} size={200} />
-                  <div className="muted">
-                    Next: {chordsInProgression[(currentChordIdx + 1) % chordsInProgression.length]?.name}
-                  </div>
-                </div>
+                <ChordCard
+                  variant="bare"
+                  size="lg"
+                  chord={cardFromChord(currentChord)}
+                  meta={`Next: ${chordsInProgression[(currentChordIdx + 1) % chordsInProgression.length]?.name}`}
+                />
               )}
             </div>
 

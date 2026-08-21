@@ -1,5 +1,6 @@
-import { FingeringViewer } from './FingeringViewer';
+import { ChordCard } from './ChordCard';
 import { CHORD_CATEGORIES } from '../data/chordCategories';
+import { cardFromLibrary } from '../data/chordResolve';
 import type { LibraryChord } from '../data/chordLibrary';
 
 type Props = {
@@ -14,9 +15,10 @@ type Props = {
 
 // The single source of truth for how library chords are displayed and grouped:
 // grouped by category (easiest → most advanced per CHORD_CATEGORIES), sorted by
-// difficulty within each category, each card showing the fingering picker,
-// difficulty · importance, and an optional info blurb. Used by the Chords page and
-// by every "pick a chord to learn" surface so they stay consistent.
+// difficulty within each category. The card itself (fingering picker, calibration
+// chip, layout) is the shared ChordCard — this component only owns the grouping,
+// sorting and section chrome. Used by the Chords page and by every "pick a chord
+// to learn" surface so they stay consistent.
 export function LibraryChordGrid({ chords, onPick, showEmptyCategories = false }: Props) {
   return (
     <>
@@ -41,17 +43,17 @@ export function LibraryChordGrid({ chords, onPick, showEmptyCategories = false }
             ) : (
               <div className="grid">
                 {inCat.map(c => (
-                  <div
+                  <ChordCard
                     key={c.id}
-                    className="chord-card"
+                    chord={cardFromLibrary(c)}
                     onClick={onPick ? () => onPick(c.id) : undefined}
-                    role={onPick ? 'button' : undefined}
-                  >
-                    <div className="name">{c.name}</div>
-                    <FingeringViewer chordId={c.id} fingerings={c.fingerings} size={120} />
-                    <div className="meta">Difficulty {c.difficulty}/10 · Importance {c.importance}/10</div>
-                    {c.info && <div className="meta" style={{ marginTop: 4 }}>{c.info}</div>}
-                  </div>
+                    meta={
+                      <>
+                        <div>Difficulty {c.difficulty}/10 · Importance {c.importance}/10</div>
+                        {c.info && <div style={{ marginTop: 4 }}>{c.info}</div>}
+                      </>
+                    }
+                  />
                 ))}
               </div>
             )}

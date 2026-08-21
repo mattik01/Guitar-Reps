@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
-import { ChordDiagram } from './ChordDiagram';
+import { ChordCard } from './ChordCard';
+import { cardFromDraft } from '../data/chordResolve';
 import { CHORD_CATEGORIES, type ChordCategoryId } from '../data/chordCategories';
-import type { ChordShape, FingerMark } from '../state/store';
+import { profileScore, shapeKey } from '../audio/calibration';
+import { clearChordProfile, useChordProfiles, type ChordShape, type FingerMark } from '../state/store';
 
 type Props = {
   initialName?: string;
@@ -14,6 +16,11 @@ type Props = {
   // and include the chosen category in the saved value. Used when registering a new chord.
   withCategory?: boolean;
   initialCategory?: ChordCategoryId;
+  // The chord being EDITED, if any. Editing its shape invalidates the calibration
+  // profile (which describes how the old shape sounds), so the editor owns both
+  // the warning and the clearing — every edit path gets it for free, instead of
+  // each call site remembering to invalidate.
+  calibratedChordId?: string;
 };
 
 const EMPTY_FRETS: string[] = ['x', 'x', 'x', 'x', 'x', 'x'];
@@ -62,7 +69,9 @@ function parseFret(s: string, stringIdx: number): number | 'x' {
   return n;
 }
 
-export function ChordEditor({ initialName = '', initialShape, onSave, onCancel, saveLabel = 'Save', title = 'Custom chord', withCategory = false, initialCategory }: Props) {
+export function ChordEditor({ initialName = '', initialShape, onSave, onCancel, saveLabel = 'Save', title = 'Custom chord', withCategory = false, initialCategory, calibratedChordId }: Props) {
+  const [profiles] = useChordProfiles();
+  const calScore = calibratedChordId ? profileScore(profiles[calibratedChordId]?.samples ?? []) : 0;
   const initial = useMemo(() => shapeToInputs(initialShape), [initialShape]);
   const [name, setName] = useState(initialName);
   const [category, setCategory] = useState<ChordCategoryId>(initialCategory ?? 'other');
@@ -121,7 +130,13 @@ export function ChordEditor({ initialName = '', initialShape, onSave, onCancel, 
         if (from >= to) throw new Error('Barre from-string must be less than to-string');
         barre = { fromIndex: from, toIndex: to, fret: bfret };
       }
-      onSave({ name: trimmed, shape: { frets: f, fingers: fi, baseFret: bf, barre }, category: withCategory ? category : undefined });
+      const nextShape: ChordShape = { frets: f, fingers: fi, baseFret: bf, barre };
+      // shapeKey ignores `fingers`: re-annotating which finger frets a note doesn't
+      // change how the chord SOUNDS, so it must not throw away the calibration.
+      if (calibratedChordId && initialShape && shapeKey(nextShape) !== shapeKey(initialShape)) {
+        clearChordProfile(calibratedChordId);
+      }
+      onSave({ name: trimmed, shape: nextShape, category: withCategory ? category : undefined });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -226,15 +241,25 @@ export function ChordEditor({ initialName = '', initialShape, onSave, onCancel, 
 
         <div style={{ minWidth: 240, textAlign: 'center' }}>
           <div style={{ fontWeight: 700, marginBottom: 6 }}>Preview</div>
-          {shape ? (
-            <ChordDiagram shape={shape} size={200} />
-          ) : (
-            <div className="muted" style={{ padding: 20 }}>Fix the errors to preview.</div>
-          )}
+          {/* id '' — an unsaved draft has nothing to calibrate yet, so no chip. */}
+          <ChordCard
+            variant="bare"
+            chord={cardFromDraft('', name, shape)}
+            showName={false}
+            diagramFallback={<div className="muted" style={{ padding: 20 }}>Fix the errors to preview.</div>}
+          />
         </div>
       </div>
 
       {error && <div style={{ color: '#b02020', marginTop: 8 }}>{error}</div>}
+
+      {calScore > 0 && (
+        <div className="muted" style={{ marginTop: 8, color: 'var(--warn)' }}>
+          ⚠ This chord is calibrated ({calScore}/100). Saving a different shape clears that —
+          you'd need a few clean strums in the Calibration Studio to build it back up.
+          (Changing only the finger numbers is fine.)
+        </div>
+      )}
 
       <div className="footer-bar">
         <button className="button primary big" onClick={save} disabled={!shape || !name.trim()}>

@@ -1,17 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ChordDiagram } from '../components/ChordDiagram';
+import { ChordCard } from '../components/ChordCard';
 import { CleanlinessBadge } from '../components/CleanlinessBadge';
 import { MicInputTuning } from '../components/MicInputTuning';
 import { useChordListener } from '../audio/useChordListener';
 import type { StrumEvent } from '../audio/chordListener';
 import { type Cleanliness } from '../audio/chroma';
-import { profilePrototype, profileScore, profileThresholds, samplesLeftToMinScore, CAL_MIN_SCORE } from '../audio/calibration';
+import { chordTargetFromProfile, profilePrototype, profileScore, samplesLeftToMinScore, shapeKey, CAL_MIN_SCORE } from '../audio/calibration';
 // The Studio talks to the mic ONLY through the signal contract (checkSignal etc.),
 // never StrumEvent internals — so the detection engine stays swappable behind it.
 import { checkSignal, chordTargetFromShape, signalFromStrum, signalWarningText, type SignalWarning } from '../audio/signalContract';
-import { libraryChordById, libraryPrimaryShape } from '../data/chordLibrary';
-import { clearChordProfile, recordChordSample, useChordProfiles, useMicSettings, useRepertoire, type ChordShape } from '../state/store';
+import { resolveChord } from '../data/chordResolve';
+import { clearChordProfile, recordChordSample, useChordProfiles, useFingeringChoice, useMicSettings, useRepertoire } from '../state/store';
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
@@ -20,15 +20,16 @@ export default function CalibrationStudio() {
   const [repertoire] = useRepertoire();
   const [profiles] = useChordProfiles();
   const [micSettings] = useMicSettings();
+  const [fingeringChoice] = useFingeringChoice();
 
-  // Resolve the chord: repertoire first (owned, possibly edited shape), else library.
-  const resolved = useMemo(() => {
-    const rep = repertoire.find(c => c.id === chordId);
-    if (rep) return { name: rep.name, shape: rep.shape as ChordShape };
-    const lib = libraryChordById(chordId);
-    if (lib) return { name: lib.name, shape: libraryPrimaryShape(lib) as ChordShape };
-    return null;
-  }, [chordId, repertoire]);
+  // Resolve through the shared resolver so the Studio calibrates EXACTLY the shape
+  // the exercises will show and listen for — including the user's saved fingering
+  // choice. (It used to take the library's primary shape, so picking fingering #2
+  // meant calibrating one voicing and being quizzed on another.)
+  const resolved = useMemo(
+    () => resolveChord(chordId, repertoire, fingeringChoice),
+    [chordId, repertoire, fingeringChoice]
+  );
 
   // The check target for this chord (theoretical template + expected notes).
   const target = useMemo(
@@ -39,13 +40,13 @@ export default function CalibrationStudio() {
   const samples = profiles[chordId]?.samples ?? [];
   const score = profileScore(samples);
   const prototype = useMemo(() => profilePrototype(samples), [samples]);
-  const thresholds = useMemo(() => profileThresholds(samples), [samples]);
-  // In Test mode we check against the LEARNED reference + calibrated thresholds.
+  // In Test mode we check against exactly what the EXERCISES will use — same
+  // adapter, so the thresholds are measured on the same similarity scale as the
+  // reference they're applied to. (Building this by hand here is how Test mode
+  // ended up mixing a centered-reference score with template-scale thresholds.)
   const testTarget = useMemo(
-    () => (resolved ? chordTargetFromShape(chordId, resolved.shape, {
-      reference: prototype, matchThreshold: thresholds?.match, unsureThreshold: thresholds?.unsure,
-    }) : null),
-    [resolved, chordId, prototype, thresholds]
+    () => (resolved ? chordTargetFromProfile(chordId, resolved.shape, samples) : null),
+    [resolved, chordId, samples]
   );
 
   const [mode, setMode] = useState<'calibrate' | 'test'>('calibrate');
@@ -83,7 +84,9 @@ export default function CalibrationStudio() {
     if (check.quality <= 0) { setLastCaptured(false); return; }
     recordChordSample(chordId, target.expectedPcs, {
       chroma: Array.from(e.chroma), sim: check.similarity, weight: check.quality, source: 'single', at: e.at,
-    });
+    // Stamp WHICH shape these samples describe, so the calibration gate can spot a
+    // later shape edit or fingering switch and ask for a recalibration.
+    }, resolved ? shapeKey(resolved.shape) : undefined);
     setLastCaptured(true);
     setFlash(f => f + 1);
   }
@@ -134,10 +137,8 @@ export default function CalibrationStudio() {
       </p>
 
       <div className="pair">
-        <div className="card" style={{ alignItems: 'center', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ fontWeight: 700, fontSize: 20 }}>{resolved.name}</div>
-          <ChordDiagram shape={resolved.shape} size={200} />
-        </div>
+        {/* The page header already shows this chord's score, larger — no chip here. */}
+        <ChordCard variant="feature" chord={resolved} diagram="shape" calibration={false} />
         <div className="card">
           <div className="row" style={{ justifyContent: 'center', marginBottom: 8 }}>
             <div className="seg">
@@ -164,8 +165,10 @@ export default function CalibrationStudio() {
                 ) : <span className="muted">strum to test recognition…</span>}
               </div>
               {testResult && (
-                <div className="muted" style={{ marginTop: 6, fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
+                <div className="muted" style={{ marginTop: 6, fontSize: 12, fontVariantNumeric: 'tabular-nums' }}
+                  title={'These are two different measures, so don\'t compare them directly. Learned is a centered correlation against how YOU play this chord (wrong chords should drop sharply, even below 0). Template is a plain cosine against the theoretical shape.'}>
                   learned <strong>{testResult.sim.toFixed(2)}</strong> · template <strong>{testResult.tplSim.toFixed(2)}</strong>
+                  <span style={{ opacity: 0.7 }}> (different scales)</span>
                 </div>
               )}
               <div style={{ marginTop: 4 }}><CleanlinessBadge clean={lastClean} /></div>

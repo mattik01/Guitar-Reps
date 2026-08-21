@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ChordCard } from '../components/ChordCard';
-import { ChordDiagram } from '../components/ChordDiagram';
 import { ChordEditor } from '../components/ChordEditor';
 import { LibraryChordGrid } from '../components/LibraryChordGrid';
 import { CHORD_LIBRARY, materializeLibraryChord } from '../data/chordLibrary';
+import { cardFromChord } from '../data/chordResolve';
 import { Sparkline } from '../routines/SwapRoutine';
 import { useFingeringChoice, useRepertoire, useSwapRecords, type ChordShape, type SwapRecord } from '../state/store';
 
@@ -69,8 +69,8 @@ export default function Repertoire() {
           {repertoire.map(c => (
             <ChordCard
               key={c.id}
-              chord={c}
-              footer={`${c.perfectReps} reps · added ${timeAgo(c.learnedAt)}`}
+              chord={cardFromChord(c)}
+              meta={`${c.perfectReps} reps · added ${timeAgo(c.learnedAt)}`}
               onClick={() => setDetailId(c.id)}
             />
           ))}
@@ -149,6 +149,7 @@ export default function Repertoire() {
             {editing ? (
               <ChordEditor
                 title={`Edit ${detail.name}`}
+                calibratedChordId={detail.id}
                 initialName={detail.name}
                 initialShape={detail.shape}
                 saveLabel="Save changes"
@@ -158,7 +159,7 @@ export default function Repertoire() {
             ) : (
               <>
                 <div className="row" style={{ alignItems: 'flex-start' }}>
-                  <ChordDiagram shape={detail.shape} size={200} />
+                  <ChordCard variant="bare" chord={cardFromChord(detail)} showName={false} />
                   <div className="col">
                     <div><strong>Perfection reps:</strong> {detail.perfectReps}</div>
                     <div><strong>Added:</strong> {new Date(detail.learnedAt).toLocaleDateString()}</div>

@@ -21,7 +21,7 @@
 // into ChordListener internals or StrumEvent fields directly — that keeps the
 // detection engine swappable behind a stable boundary.
 
-import { chordTemplate, cosineSim, verdictForSimilarity, type Verdict } from './chroma';
+import { centeredCosineSim, chordTemplate, cosineSim, verdictForSimilarity, type Verdict } from './chroma';
 import { soundingPitchClasses } from '../data/validateChords';
 import type { ChordShape } from '../state/store';
 import type { StrumEvent } from './chordListener';
@@ -45,6 +45,10 @@ export type ChordTarget = {
   reference?: Float32Array | null; // learned prototype once calibrated (blended into the match)
   matchThreshold?: number;
   unsureThreshold?: number;
+  // Weighted-median similarity this chord reaches when played correctly on THIS
+  // rig. Normalizes cross-target ranking so a flat-template chord (a 7th, say)
+  // isn't structurally outscored by a peakier one played equally well.
+  typicalSim?: number;
 };
 
 export type SignalWarning = 'off-chord' | 'muddy' | 'too-quiet';
@@ -62,6 +66,9 @@ export type SignalCheck = {
 // --- tunable boundary constants (the "safety measures") -------------------
 export const SIGNAL_OFF_CHORD_SIM = 0.4; // below this, the signal isn't this chord
 export const SIGNAL_MUDDY_BELOW = 45;    // cleanliness under this is flagged muddy
+// Top-two score gap below which a multi-target pick is "could be either".
+// Mirrors ChordListener's SWAP_CLASSIFY_MARGIN — the two must move together.
+export const SIGNAL_AMBIGUOUS_MARGIN = 0.04;
 
 // --- producer adapter: ChordListener → ChordSignal ------------------------
 // The ONE place that knows the StrumEvent shape. Swap engines here.
@@ -79,7 +86,12 @@ export function signalFromStrum(e: StrumEvent): ChordSignal {
 export function chordTargetFromShape(
   id: string,
   shape: ChordShape,
-  opts?: { reference?: Float32Array | null; matchThreshold?: number; unsureThreshold?: number },
+  opts?: {
+    reference?: Float32Array | null;
+    matchThreshold?: number;
+    unsureThreshold?: number;
+    typicalSim?: number;
+  },
 ): ChordTarget {
   return {
     id,
@@ -88,6 +100,7 @@ export function chordTargetFromShape(
     reference: opts?.reference ?? null,
     matchThreshold: opts?.matchThreshold,
     unsureThreshold: opts?.unsureThreshold,
+    typicalSim: opts?.typicalSim,
   };
 }
 
@@ -98,10 +111,26 @@ export function chordTargetFromShape(
 export function checkSignal(signal: ChordSignal, target: ChordTarget): SignalCheck {
   const v = Float32Array.from(signal.chroma);
   // Match against the learned reference when we have one, else the theoretical
-  // template. (A smarter blend can slot in here without touching callers.)
+  // template.
+  //
+  // Two things here were learned the hard way on a real guitar (2026-08-20):
+  //
+  //  1. The reference is compared with CENTERED cosine, not plain cosine. A
+  //     prototype learned from real audio carries the rig's broadband signature
+  //     on every pitch class, and that signature is identical for every chord you
+  //     play — so plain cosine against it returns a high score for ANY chord.
+  //     Centering strips the shared component and compares only the peaks.
+  //  2. It is NOT `max(tplSim, refSim)`. Taking the max meant the reference could
+  //     only ever LOOSEN recognition, never tighten it: one inflated reference
+  //     score overrode the template's much better discrimination and everything
+  //     matched. The reference replaces the template when present — and
+  //     chordTargetFromProfile refuses to attach a prototype too flat to identify
+  //     anything, so "present" implies "discriminative".
+  //
+  // Thresholds and typicalSim are re-measured on whichever scale is in play (see
+  // profileThresholdsAgainst), so the two paths stay comparable.
   const tplSim = cosineSim(v, target.template);
-  const refSim = target.reference ? cosineSim(v, target.reference) : -1;
-  const similarity = Math.max(tplSim, refSim);
+  const similarity = target.reference ? centeredCosineSim(v, target.reference) : tplSim;
 
   const verdict = verdictForSimilarity(similarity, target.matchThreshold, target.unsureThreshold);
   const clean = signal.cleanliness;
@@ -127,4 +156,52 @@ export function signalWarningText(w: SignalWarning, chordName: string): string {
     case 'muddy': return 'A bit muddy — it still counts, just less.';
     case 'too-quiet': return 'Too quiet to be sure.';
   }
+}
+
+// --- multi-target selection: "which of these chords is it?" ------------------
+// The contract's answer to the one question checkSignal can't answer alone. The
+// swap routine needs it to tell chord A from chord B; keeping it here (rather
+// than reading ChordListener's own classifier) is what lets a LEARNED reference
+// influence the pick, since the engine only ever matches the theoretical template.
+
+export type SignalRank = {
+  id: string;
+  check: SignalCheck;
+  score: number; // similarity normalized by the target's typicalSim (1 when absent)
+};
+
+export type SignalRanking = {
+  ranked: SignalRank[];  // score descending; empty when there are no targets
+  best: string | null;   // null when ambiguous, or when there are no targets
+  ambiguous: boolean;    // top two too close to call
+  margin: number;        // ranked[0].score - ranked[1].score (0 with < 2 targets)
+};
+
+/**
+ * Rank targets against one signal. Semantics deliberately mirror the
+ * real-guitar-validated engine classifier:
+ *   • score = similarity / typicalSim (1 when the target has no typicalSim)
+ *   • a single target is ALWAYS confident
+ *   • otherwise `best` is null unless the top-two gap is STRICTLY greater than
+ *     the margin
+ * With uncalibrated targets (no reference, no typicalSim) this reduces exactly to
+ * cosine-against-template ranking — i.e. identical to today's behaviour. Pure.
+ */
+export function bestOfSignal(
+  signal: ChordSignal,
+  targets: ChordTarget[],
+  opts?: { minMargin?: number },
+): SignalRanking {
+  const minMargin = opts?.minMargin ?? SIGNAL_AMBIGUOUS_MARGIN;
+  const ranked: SignalRank[] = targets
+    .map(t => {
+      const check = checkSignal(signal, t);
+      return { id: t.id, check, score: t.typicalSim ? check.similarity / t.typicalSim : check.similarity };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  if (ranked.length === 0) return { ranked, best: null, ambiguous: false, margin: 0 };
+  const margin = ranked.length >= 2 ? ranked[0].score - ranked[1].score : 0;
+  const ambiguous = ranked.length >= 2 && !(margin > minMargin);
+  return { ranked, best: ambiguous ? null : ranked[0].id, ambiguous, margin };
 }

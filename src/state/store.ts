@@ -4,7 +4,7 @@ import { matchCatalogTracks, type CatalogSong } from '../data/catalogDb';
 import { deleteFile } from '../data/fileStore';
 // Value import from audio/chroma is safe: chroma.ts only imports TYPES from
 // this module, so there is no runtime cycle.
-import { CAL_MAX_SAMPLES, CAL_SAMPLE_CAP, type CalSample } from '../audio/chroma';
+import { CAL_SAMPLE_CAP } from '../audio/chroma';
 
 export type FingerMark = 1 | 2 | 3 | 4 | 'T' | null;
 
@@ -36,7 +36,16 @@ export type Chord = {
   perfectReps: number;
 };
 
-export type SwapAttempt = { count: number; at: number };
+export type SwapAttempt = {
+  count: number;         // what the user saved — the truth for scoring
+  at: number;
+  // What the microphone counted for the same minute, when it was counting
+  // (absent for hand-counted rounds and for every attempt logged before
+  // 2026-08-21). Recorded ALWAYS, even when it agrees, so the mic's error can
+  // be measured over real sessions instead of recalled — `count - micCount` is
+  // the detector's signed error for that round. Never used for scoring.
+  micCount?: number;
+};
 
 export type SwapRecord = {
   pairKey: string;
@@ -210,8 +219,8 @@ export const useRoadmapProgress = () => useLocalStore<Record<string, RoadmapEntr
 // YouTube video id (an 11-char id never collides with a roadmap item/level id).
 export const useWatchedVideos = () => useLocalStore<Record<string, boolean>>('reps.roadmapVideos', {});
 // Microphone-assisted detection (swap counter + quiz auto-reveal). Opt-in.
-// `calibrate`: collect per-chord calibration samples during exercises — the
-// user promises clean playing and a quiet room while it's on.
+// (There is no `calibrate` flag: calibration is deliberate, per-chord, and lives
+// in the Calibration Studio — see retirePassiveCalibration below.)
 // `debug`: surface the /mic-test diagnostics (live chroma, per-chord threshold
 // table, raw event log) inline in the exercises. Purely informational.
 // `activationThreshold`: Discord-style input-sensitivity gate on the same 0..1
@@ -223,32 +232,23 @@ export const useWatchedVideos = () => useLocalStore<Record<string, boolean>>('re
 // Default off so the real-guitar-validated path is unchanged until opted in.
 // `filterHpHz` / `filterLpHz`: tunable cutoffs for the filter chain, so the
 // high-pass/low-pass can be dialed to the room + guitar (defaults 75 Hz / 7 kHz).
-export type MicSettings = { enabled: boolean; calibrate?: boolean; debug?: boolean; activationThreshold?: number; filters?: boolean; filterHpHz?: number; filterLpHz?: number };
-export const useMicSettings = () => useLocalStore<MicSettings>('reps.micSettings', { enabled: false, calibrate: false, debug: false, activationThreshold: 0, filters: false, filterHpHz: 75, filterLpHz: 7000 });
-// Per-chord mic auto-calibration: similarities of strums confirmed as correct
-// (quiz "✓ Got it" / swap confident classifications), each weighted by how
-// clean the strum was. Keyed by chord id; calibratedThresholds() in
-// src/audio/chroma.ts turns these into thresholds.
-export type MicCalibration = Record<string, { sims: CalSample[]; updatedAt: number }>;
-export const useMicCalibration = () => useLocalStore<MicCalibration>('reps.micCalibration', {});
-// Append one cleanliness-weighted sample (weight from calSampleWeight — callers
-// skip recording entirely when it returns null). writeStorage notifies all
-// subscribed components, so hook users stay in sync.
-export function recordCalibrationSample(chordId: string, sim: number, weight: number) {
-  const cal = read<MicCalibration>('reps.micCalibration', {});
-  const prev = cal[chordId]?.sims ?? [];
-  writeStorage('reps.micCalibration', {
-    ...cal,
-    [chordId]: { sims: [...prev, { s: sim, w: weight }].slice(-CAL_MAX_SAMPLES), updatedAt: Date.now() },
-  });
-}
-// A chord's samples describe its SHAPE — drop them when the shape is edited.
-export function clearMicCalibration(chordId: string) {
-  const cal = read<MicCalibration>('reps.micCalibration', {});
-  if (!(chordId in cal)) return;
-  const next = { ...cal };
-  delete next[chordId];
-  writeStorage('reps.micCalibration', next);
+export type MicSettings = { enabled: boolean; debug?: boolean; activationThreshold?: number; filters?: boolean; filterHpHz?: number; filterLpHz?: number };
+export const useMicSettings = () => useLocalStore<MicSettings>('reps.micSettings', { enabled: false, debug: false, activationThreshold: 0, filters: false, filterHpHz: 75, filterLpHz: 7000 });
+// One-time cleanup: passive auto-calibration is retired. Its `reps.micCalibration`
+// samples were sim-only (no chroma), so they cannot produce a learned prototype —
+// carrying them into chordProfiles would let a chord pass the calibration gate
+// with nothing actually learned, which is exactly what the gate exists to prevent.
+// So the key is dropped rather than migrated, along with the dead `calibrate` flag.
+// Idempotent; call once at startup OUTSIDE React (never during render).
+export function retirePassiveCalibration() {
+  if (localStorage.getItem('reps.micCalibration') != null) {
+    localStorage.removeItem('reps.micCalibration');
+  }
+  const mic = read<MicSettings & { calibrate?: boolean }>('reps.micSettings', { enabled: false });
+  if ('calibrate' in mic) {
+    const { calibrate: _dropped, ...rest } = mic;
+    writeStorage('reps.micSettings', rest);
+  }
 }
 
 // --- Deliberate per-chord calibration (Calibration Studio) ---
@@ -268,17 +268,27 @@ export type CalibrationProfile = {
   chordId: string;
   samples: CalibrationSample[];
   expectedPcs: number[]; // sounding pitch classes from the shape (future note-validator info)
+  // Fingerprint of the SHAPE these samples describe (see shapeKey in
+  // audio/calibration.ts). The calibration gate refuses a profile whose shape has
+  // since changed, which also covers the user switching fingering. Absent on
+  // profiles recorded before this existed — treated as matching.
+  shapeKey?: string;
   updatedAt: number;
 };
 export const useChordProfiles = () => useLocalStore<Record<string, CalibrationProfile>>('reps.chordProfiles', {});
 
 // Append one Studio-collected sample (already quality-gated by the caller).
-export function recordChordSample(chordId: string, expectedPcs: number[], sample: CalibrationSample) {
+// `shapeKey` stamps which shape the sample describes so the gate can spot a later
+// shape/fingering change; it's preserved from the existing profile when omitted.
+export function recordChordSample(
+  chordId: string, expectedPcs: number[], sample: CalibrationSample, shapeKey?: string,
+) {
   const all = read<Record<string, CalibrationProfile>>('reps.chordProfiles', {});
-  const samples = [...(all[chordId]?.samples ?? []), sample].slice(-CAL_SAMPLE_CAP);
+  const prev = all[chordId];
+  const samples = [...(prev?.samples ?? []), sample].slice(-CAL_SAMPLE_CAP);
   writeStorage('reps.chordProfiles', {
     ...all,
-    [chordId]: { chordId, samples, expectedPcs, updatedAt: Date.now() },
+    [chordId]: { chordId, samples, expectedPcs, shapeKey: shapeKey ?? prev?.shapeKey, updatedAt: Date.now() },
   });
 }
 // Drop a chord's whole profile (shape edited, or user reset in the Studio).

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ChordDiagram } from '../components/ChordDiagram';
+import { ChordCard } from '../components/ChordCard';
+import { cardFromChord } from '../data/chordResolve';
 import { ChordEditor } from '../components/ChordEditor';
 import { CleanlinessBadge } from '../components/CleanlinessBadge';
 import { libraryChordById, materializeLibraryChord } from '../data/chordLibrary';
@@ -12,8 +13,11 @@ import { MicSettingsToggles } from '../components/MicSettingsToggles';
 import { Timer, type TimerHandle } from '../components/Timer';
 import { useChordListener } from '../audio/useChordListener';
 import type { StrumEvent } from '../audio/chordListener';
-import { calSampleWeight, typicalSimilarity, type Cleanliness } from '../audio/chroma';
-import { pairKey, recordCalibrationSample, useMicCalibration, useMicSettings, useRepertoire, useRoutineLog, useSwapRecords, type Chord, type ChordShape, type SwapRecord } from '../state/store';
+import { type Cleanliness } from '../audio/chroma';
+import { chordTargetFromProfile, shapeKey } from '../audio/calibration';
+import { bestOfSignal, signalFromStrum } from '../audio/signalContract';
+import { useCalibrationGate } from '../audio/useCalibrationGate';
+import { pairKey, useChordProfiles, useMicSettings, useRepertoire, useRoutineLog, useSwapRecords, type Chord, type ChordShape, type SwapRecord, type SwapAttempt } from '../state/store';
 
 type Phase = 'picking' | 'ready' | 'running' | 'entering' | 'finished';
 
@@ -46,7 +50,7 @@ export default function SwapRoutine() {
 
   // --- microphone auto-count ---
   const [micSettings, setMicSettings] = useMicSettings();
-  const [calibration] = useMicCalibration();
+  const [profiles] = useChordProfiles();
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
   const detectedSwapsRef = useRef(0);
@@ -83,23 +87,39 @@ export default function SwapRoutine() {
 
   const notEnough = repertoire.length < 2;
 
-  // Calibrated typical similarities normalize the A-vs-B comparison: without
-  // them, a chord with a flatter template (e.g. a 7th) is structurally
-  // outscored by a peakier one even when played equally well.
+  // The listener matches the theoretical template only, so it gets bare targets;
+  // A-vs-B is decided caller-side by bestOfSignal, which can weigh each chord's
+  // LEARNED reference and typicalSim. (typicalSim normalizes the comparison:
+  // without it a flatter-template chord like a 7th is structurally outscored by a
+  // peakier one even when played equally well.)
   const micTargets = useMemo(
-    () => (pair
-      ? pair.map(c => ({
-          id: c.id,
-          shape: c.shape,
-          typicalSim: typicalSimilarity(calibration[c.id]?.sims ?? []) ?? undefined,
-        }))
-      : []),
-    [pair, calibration]
+    () => (pair ? pair.map(c => ({ id: c.id, shape: c.shape })) : []),
+    [pair]
   );
+  const profileTargets = useMemo(
+    () => (pair ? pair.map(c => chordTargetFromProfile(c.id, c.shape, profiles[c.id]?.samples ?? [])) : []),
+    [pair, profiles]
+  );
+  const profileTargetsRef = useRef(profileTargets);
+  profileTargetsRef.current = profileTargets;
+
+  // Calibration gate: counting needs to tell the two chords APART, so BOTH must
+  // be calibrated. If either isn't, the mic stays shut and the round is counted
+  // by hand rather than guessed at.
+  const gate = useCalibrationGate(
+    pair ? [pair[0].id, pair[1].id] : [],
+    useMemo(
+      () => (pair ? { [pair[0].id]: shapeKey(pair[0].shape), [pair[1].id]: shapeKey(pair[1].shape) } : {}),
+      [pair]
+    )
+  );
+  // "the mic is allowed to count this pair" — phase-independent, so the
+  // end-of-round prefill can consult the same fact the round ran under.
+  const micGated = micSettings.enabled && !!pair && gate.ready;
 
   // Armed from 'ready' so the permission prompt + level meter appear BEFORE the
   // clock starts (the pick click provides the user gesture for resume()).
-  const micActive = micSettings.enabled && !!pair && (phase === 'ready' || phase === 'running');
+  const micActive = micGated && (phase === 'ready' || phase === 'running');
 
   // Counting rule: "flip counting with permissive fallback". Counting matters
   // more than classification here — a muddy strum still counts. Classification
@@ -107,28 +127,28 @@ export default function SwapRoutine() {
   // IDENTICAL consecutive strums (double-strums of the same chord). Anything
   // unsure is assumed to be the alternation the exercise asks for.
   function handleStrum(e: StrumEvent) {
-    if (micSettings.debug) pushDebug({ at: e.at, kind: 'strum', detail: strumLogDetail(e) });
-    const name = e.best ? pair?.find(c => c.id === e.best)?.name ?? null : null;
+    // Classify through the signal contract so each chord's learned reference and
+    // typicalSim count. With uncalibrated targets bestOfSignal reduces to exactly
+    // the engine's own cosine-vs-template ranking, so this is a no-op until a
+    // chord is deliberately calibrated.
+    const ranking = bestOfSignal(signalFromStrum(e), profileTargetsRef.current);
+    const best = ranking.best;
+    if (micSettings.debug) {
+      // Carry BOTH classifiers while this is bedding in, so a real-guitar round
+      // shows where the contract and the engine disagree.
+      pushDebug({ at: e.at, kind: 'strum', detail: `${strumLogDetail(e)} · contract=${best ?? '—'}` });
+    }
+    const name = best ? pair?.find(c => c.id === best)?.name ?? null : null;
     setHearing(name);
     setLastClean(e.cleanliness); // live feedback in ready AND running — never gates
     if (phaseRef.current !== 'running') return;
-    // Calibration collection: only strums the classifier is CONFIDENT about —
-    // weaker ground truth than the quiz's user-confirmed samples, but the user
-    // switched calibration on, i.e. promised clean playing in a quiet room.
-    // Weighted by the strum's cleanliness; too-dirty strums are skipped
-    // entirely (calSampleWeight returns null).
-    if (micSettings.calibrate && e.best) {
-      const sim = e.matches.find(m => m.id === e.best)?.similarity;
-      const weight = calSampleWeight(e.cleanliness?.score);
-      if (sim != null && weight != null) recordCalibrationSample(e.best, sim, weight);
-    }
     strumsHeardRef.current++;
     if (strumsHeardRef.current === 1) {
-      lastConfidentChordRef.current = e.best; // first strum starts the count, isn't a swap
+      lastConfidentChordRef.current = best; // first strum starts the count, isn't a swap
       return;
     }
-    if (e.best && lastConfidentChordRef.current === e.best) return; // confident repeat — not a swap
-    lastConfidentChordRef.current = e.best; // null when unsure: next confident strum counts
+    if (best && lastConfidentChordRef.current === best) return; // confident repeat — not a swap
+    lastConfidentChordRef.current = best; // null when unsure: next confident strum counts
     detectedSwapsRef.current++;
     setLiveSwaps(detectedSwapsRef.current);
   }
@@ -277,7 +297,9 @@ export default function SwapRoutine() {
     if (flashTimeoutRef.current) window.clearTimeout(flashTimeoutRef.current);
     flashTimeoutRef.current = window.setTimeout(() => setFlashing(false), 1600);
     // Prefill with the mic's count when it heard anything — still fully editable.
-    if (micSettings.enabled && strumsHeardRef.current > 0) {
+    // `micCounted` is also what gets recorded next to the saved count, so it is
+    // set whenever the mic was counting, agreement or not.
+    if (micGated && strumsHeardRef.current > 0) {
       setEntered(String(detectedSwapsRef.current));
       setMicCounted(detectedSwapsRef.current);
     }
@@ -309,9 +331,16 @@ export default function SwapRoutine() {
     if (!Number.isFinite(n) || n < 0) return;
     const now = Date.now();
     const [aSorted, bSorted] = [pair[0].id, pair[1].id].sort();
+    // Record the mic's count alongside the saved one whenever the mic was
+    // counting — including when the two agree. The disagreement is the only
+    // real measurement of detector accuracy we get, and it is worthless if
+    // only the mismatches are kept.
+    const attempt: SwapAttempt = micCounted == null
+      ? { count: n, at: now }
+      : { count: n, at: now, micCount: micCounted };
     setSwaps(prev => {
       const existing = prev[key];
-      const history = [...(existing?.history ?? []), { count: n, at: now }].slice(-MAX_HISTORY);
+      const history = [...(existing?.history ?? []), attempt].slice(-MAX_HISTORY);
       const next: SwapRecord = existing
         ? {
             ...existing,
@@ -329,7 +358,7 @@ export default function SwapRoutine() {
             lastCount: n,
             attempts: 1,
             lastAt: now,
-            history: [{ count: n, at: now }],
+            history: [attempt],
           };
       return { ...prev, [key]: next };
     });
@@ -446,17 +475,38 @@ export default function SwapRoutine() {
       </div>
 
       <div className="pair">
-        <div className="card" style={{ alignItems: 'center', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ fontWeight: 700, fontSize: 20 }}>{a.name}</div>
-          <ChordDiagram shape={a.shape} size={200} />
-          <RepertoireToggle chord={a} owned={owned.has(a.id)} onToggle={toggleRepertoire} />
-        </div>
-        <div className="card" style={{ alignItems: 'center', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ fontWeight: 700, fontSize: 20 }}>{b.name}</div>
-          <ChordDiagram shape={b.shape} size={200} />
-          <RepertoireToggle chord={b} owned={owned.has(b.id)} onToggle={toggleRepertoire} />
-        </div>
+        {[a, b].map(c => (
+          <ChordCard
+            key={c.id}
+            variant="feature"
+            chord={cardFromChord(c)}
+            needsCalibration={micSettings.enabled && gate.needs.has(c.id)}
+            footer={<RepertoireToggle chord={c} owned={owned.has(c.id)} onToggle={toggleRepertoire} />}
+          />
+        ))}
       </div>
+
+      {micSettings.enabled && pair && !gate.ready && (
+        <div className="gate-note">
+          <div>
+            🎙 <strong>Mic counting is off for this pair.</strong>{' '}
+            {gate.blocking.map(bk => chordNames.get(bk.chordId) ?? bk.chordId).join(' and ')}{' '}
+            {gate.blocking.length === 1 ? "isn't calibrated yet" : "aren't calibrated yet"} — without that I
+            can't reliably tell your two chords apart, so I won't guess. Count in your head this round.
+          </div>
+          <div className="row" style={{ justifyContent: 'center', marginTop: 8 }}>
+            {gate.blocking.map(bk => (
+              <Link key={bk.chordId} className="button primary"
+                to={`/calibrate/${encodeURIComponent(bk.chordId)}`}>
+                🎯 Calibrate {chordNames.get(bk.chordId) ?? bk.chordId}
+              </Link>
+            ))}
+          </div>
+          <div className="muted" style={{ marginTop: 6 }}>
+            About {Math.max(...gate.blocking.map(bk => bk.samplesLeft))} clean strums each — under a minute.
+          </div>
+        </div>
+      )}
 
       <Timer ref={timerRef} seconds={seconds} onComplete={onTimerComplete} />
 
@@ -474,11 +524,7 @@ export default function SwapRoutine() {
               <MicInputTuning getLevel={mic.getLevel} state={mic.state} compact />
             </div>
           )}
-          {micSettings.calibrate && mic.state === 'listening' && (
-            <div className="muted" style={{ textAlign: 'center', marginTop: 4 }}>
-              🎯 Auto-calibration is on — play as cleanly as you can, in a quiet room.
-            </div>
-          )}
+
         </>
       )}
 
@@ -505,9 +551,11 @@ export default function SwapRoutine() {
             <div className="card" style={{ marginTop: 12, textAlign: 'center' }}>
               <div style={{ fontSize: 20, fontWeight: 700 }}>Swap between the two chords — count in your head.</div>
               <div className="muted" style={{ marginTop: 6 }}>
-                {micSettings.enabled && (mic.state === 'denied' || mic.state === 'error')
-                  ? 'Mic unavailable — count in your head as usual. Screen will flash when the minute is up.'
-                  : 'Screen will flash when the minute is up.'}
+                {micSettings.enabled && !gate.ready
+                  ? `Mic counting is off — ${gate.blocking.map(bk => chordNames.get(bk.chordId) ?? bk.chordId).join(' and ')} still needs calibrating. Screen will flash when the minute is up.`
+                  : micSettings.enabled && (mic.state === 'denied' || mic.state === 'error')
+                    ? 'Mic unavailable — count in your head as usual. Screen will flash when the minute is up.'
+                    : 'Screen will flash when the minute is up.'}
               </div>
             </div>
           )}
@@ -552,11 +600,22 @@ export default function SwapRoutine() {
           <div style={{ textAlign: 'center', fontSize: 26, fontWeight: 800, margin: '10px 0' }}>
             {savedCount} swaps{priorBest == null || savedCount > priorBest ? ' — new record 🎉' : ''}
           </div>
+          {micCounted != null && (
+            <p className="muted" style={{ textAlign: 'center', marginTop: -4 }}>
+              {micCounted === savedCount
+                ? '🎙 The mic agreed with you exactly.'
+                : `🎙 The mic counted ${micCounted} — ${Math.abs(savedCount - micCounted)} ${
+                    micCounted < savedCount ? 'short' : 'over'}.`}
+            </p>
+          )}
           {record && record.history.length > 1 && (
             <div className="card" style={{ marginBottom: 12 }}>
               <h3>History for this pair</h3>
               <Sparkline history={record.history} />
-              <div className="muted">Showing last {record.history.length} attempts · best <strong>{record.bestCount}</strong></div>
+              <div className="muted">
+                Showing last {record.history.length} attempts · best <strong>{record.bestCount}</strong>
+                {micAccuracy(record.history)}
+              </div>
             </div>
           )}
           <div className="footer-bar">
@@ -657,6 +716,21 @@ function TrainedPairsList({ swaps, repertoire, onPick }: {
         ))}
       </div>
     </div>
+  );
+}
+
+// Running accuracy of the microphone counter over the rounds that used it:
+// the saved (hand) count is the truth, `micCount` what the mic heard. Shown so
+// the detector's real-world error is visible from ordinary practice instead of
+// having to be recalled after the fact.
+function micAccuracy(history: SwapAttempt[]) {
+  const scored = history.filter(h => h.micCount != null);
+  if (scored.length === 0) return null;
+  const exact = scored.filter(h => h.micCount === h.count).length;
+  const worst = scored.reduce((m, h) => Math.max(m, Math.abs(h.count - h.micCount!)), 0);
+  return (
+    <> · 🎙 mic exact on <strong>{exact}/{scored.length}</strong>
+      {worst > 0 ? ` · worst miss ${worst}` : ''}</>
   );
 }
 
