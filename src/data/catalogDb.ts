@@ -32,7 +32,9 @@ export type SearchOpts = {
   tempoMax?: number;
   key?: number;
   mode?: number;
-  sort?: 'popularity' | 'title' | 'artist';
+  // 'playability' is not an SQL ordering — searchPool returns popularity-ordered
+  // candidates and the caller ranks them against the user's swap history.
+  sort?: 'popularity' | 'title' | 'artist' | 'playability';
   limit?: number;
   offset?: number;
 };
@@ -119,6 +121,29 @@ export async function searchCatalog(opts: SearchOpts): Promise<{ songs: CatalogS
   return { songs: (rows as any[]).map(toSong), hasMore };
 }
 
+/** How many songs match these filters (not how many are rendered). */
+export async function countCatalog(opts: SearchOpts): Promise<number> {
+  const { total } = await call('count', opts);
+  return total;
+}
+
+/**
+ * Matching songs WITH their raw progression, most popular first, capped at
+ * `poolLimit`. The playability sort needs each song's chord changes graded against
+ * the user's swap history, which only the main thread knows — so scoring happens
+ * there and this just supplies the raw material. `total` is the unbounded match
+ * count, so the caller can say what the cap left out.
+ */
+export async function searchCatalogPool(
+  opts: SearchOpts & { poolLimit?: number },
+): Promise<{ songs: (CatalogSong & { progression: string })[]; total: number }> {
+  const { rows, total } = await call('searchPool', opts);
+  return {
+    songs: (rows as any[]).map(r => ({ ...toSong(r), progression: String(r.progression ?? '') })),
+    total,
+  };
+}
+
 export type ChordCount = { chord: string; n: number };
 
 /** Distinct chords (at opts.level) across the songs the given filters allow,
@@ -203,5 +228,7 @@ export function useCatalog() {
 
   const search = useCallback((opts: SearchOpts) => searchCatalog(opts), []);
   const chords = useCallback((opts: SearchOpts) => availableChords(opts), []);
-  return { status, search, chords };
+  const count = useCallback((opts: SearchOpts) => countCatalog(opts), []);
+  const pool = useCallback((opts: SearchOpts & { poolLimit?: number }) => searchCatalogPool(opts), []);
+  return { status, search, chords, count, pool };
 }

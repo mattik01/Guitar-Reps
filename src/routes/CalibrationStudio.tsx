@@ -1,19 +1,20 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { BackLink } from '../components/BackLink';
+import { IconMic, IconStop, IconTarget, IconTest, IconWarn, IconYes } from '../components/icons';
 import { Link, useParams } from 'react-router-dom';
 import { ChordCard } from '../components/ChordCard';
 import { CleanlinessBadge } from '../components/CleanlinessBadge';
-import { MicInputTuning } from '../components/MicInputTuning';
+import { DetectionDetails } from '../components/DetectionDetails';
+import { strumLogDetail, type MicLogEntry } from '../components/detectionLog';
 import { useChordListener } from '../audio/useChordListener';
 import type { StrumEvent } from '../audio/chordListener';
 import { type Cleanliness } from '../audio/chroma';
-import { chordTargetFromProfile, profilePrototype, profileScore, samplesLeftToMinScore, shapeKey, CAL_MIN_SCORE } from '../audio/calibration';
+import { chordTargetFromProfile, profileScore, shapeKey, CAL_MIN_SCORE } from '../audio/calibration';
 // The Studio talks to the mic ONLY through the signal contract (checkSignal etc.),
 // never StrumEvent internals — so the detection engine stays swappable behind it.
 import { checkSignal, chordTargetFromShape, signalFromStrum, signalWarningText, type SignalWarning } from '../audio/signalContract';
 import { resolveChord } from '../data/chordResolve';
 import { clearChordProfile, recordChordSample, useChordProfiles, useFingeringChoice, useMicSettings, useRepertoire } from '../state/store';
-
-const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 export default function CalibrationStudio() {
   const { chordId = '' } = useParams();
@@ -39,7 +40,6 @@ export default function CalibrationStudio() {
 
   const samples = profiles[chordId]?.samples ?? [];
   const score = profileScore(samples);
-  const prototype = useMemo(() => profilePrototype(samples), [samples]);
   // In Test mode we check against exactly what the EXERCISES will use — same
   // adapter, so the thresholds are measured on the same similarity scale as the
   // reference they're applied to. (Building this by hand here is how Test mode
@@ -56,7 +56,7 @@ export default function CalibrationStudio() {
   const [warnings, setWarnings] = useState<SignalWarning[]>([]);
   const [flash, setFlash] = useState(0);
   const [testResult, setTestResult] = useState<{ verdict: string; sim: number; tplSim: number } | null>(null);
-  const [liveChroma, setLiveChroma] = useState<Float32Array>(new Float32Array(12));
+  const [log, setLog] = useState<MicLogEntry[]>([]);
 
   const targets = useMemo(
     () => (resolved ? [{ id: chordId, shape: resolved.shape }] : []),
@@ -64,6 +64,7 @@ export default function CalibrationStudio() {
   );
 
   function handleStrum(e: StrumEvent) {
+    setLog(prev => [{ at: e.at, kind: 'strum' as const, detail: strumLogDetail(e) }, ...prev].slice(0, 80));
     setLastClean(e.cleanliness); // full breakdown, for the badge display only
     if (!target) return;
     const signal = signalFromStrum(e);
@@ -101,40 +102,28 @@ export default function CalibrationStudio() {
     onStrum: handleStrum,
   });
 
-  useEffect(() => {
-    if (mic.state !== 'listening') return;
-    const id = window.setInterval(() => setLiveChroma(mic.getLiveChroma().slice()), 80);
-    return () => window.clearInterval(id);
-  }, [mic.state, mic.getLiveChroma]);
-
   if (!resolved) {
     return (
       <div>
         <div className="row">
-          <Link to="/calibrate" className="button">← All chords</Link>
+          <Link to="/chords" className="button">← Chords</Link>
           <h1 style={{ margin: 0 }}>Calibrate</h1>
         </div>
-        <div className="card"><p>Unknown chord “{chordId}”. <Link to="/calibrate">Pick one to calibrate.</Link></p></div>
+        <div className="card"><p>Unknown chord “{chordId}”. <Link to="/chords">Pick one to calibrate.</Link></p></div>
       </div>
     );
   }
 
   const calibrated = score >= CAL_MIN_SCORE;
-  const left = samplesLeftToMinScore(samples);
-  const protoArr = prototype ? Array.from(prototype) : null;
 
   return (
     <div>
       <div className="row">
-        <Link to="/calibrate" className="button">← All chords</Link>
+        <BackLink to={`/chords?chord=${encodeURIComponent(chordId)}`} label={resolved.name} />
         <h1 style={{ margin: 0 }}>Calibrate {resolved.name}</h1>
         <div className="spacer" />
-        <div className={`cal-score ${calibrated ? 'good' : ''}`}>{score}/100{calibrated ? ' ✓' : ''}</div>
+        <div className={`cal-score ${calibrated ? 'good' : ''}`}>{score}/100{calibrated && <IconYes size={15} />}</div>
       </div>
-      <p className="muted">
-        Play <strong>{resolved.name}</strong> cleanly a few times — I’ll keep the good strums and learn how it sounds on your guitar.
-        {calibrated ? ' Calibrated — keep going to sharpen it.' : ` About ${left} more clean strum${left === 1 ? '' : 's'} to go.`}
-      </p>
 
       <div className="pair">
         {/* The page header already shows this chord's score, larger — no chip here. */}
@@ -142,15 +131,14 @@ export default function CalibrationStudio() {
         <div className="card">
           <div className="row" style={{ justifyContent: 'center', marginBottom: 8 }}>
             <div className="seg">
-              <button className={`seg-btn ${mode === 'calibrate' ? 'on' : ''}`} onClick={() => { setMode('calibrate'); setTestResult(null); }}>🎯 Calibrate</button>
+              <button className={`seg-btn ${mode === 'calibrate' ? 'on' : ''}`} onClick={() => { setMode('calibrate'); setTestResult(null); }}><IconTarget size={13} /> Calibrate</button>
               <button className={`seg-btn ${mode === 'test' ? 'on' : ''}`} disabled={samples.length === 0}
-                onClick={() => { setMode('test'); setLastCaptured(null); }} title={samples.length === 0 ? 'Calibrate first' : 'Test recognition'}>🔎 Test</button>
+                onClick={() => { setMode('test'); setLastCaptured(null); }} title={samples.length === 0 ? 'Calibrate first' : 'Test recognition'}><IconTest size={13} /> Test</button>
             </div>
           </div>
-          <MicInputTuning getLevel={mic.getLevel} state={mic.state} compact />
           <div className="row" style={{ marginTop: 10, justifyContent: 'center' }}>
             <button className={`button big ${listening ? '' : 'primary'}`} onClick={() => setListening(l => !l)}>
-              {listening ? '■ Stop' : '🎙 Start'}
+              {listening ? <><IconStop /> Stop</> : <><IconMic /> Start</>}
             </button>
           </div>
           {mic.state === 'listening' && mode === 'test' && (
@@ -158,7 +146,7 @@ export default function CalibrationStudio() {
               <div key={flash} style={{ minHeight: 26 }}>
                 {testResult ? (
                   <span className={`verdict-banner ${testResult.verdict === 'match' ? 'match' : testResult.verdict === 'nomatch' ? 'nomatch' : ''}`}>
-                    {testResult.verdict === 'match' && 'Recognized ✓'}
+                    {testResult.verdict === 'match' && <>Recognized <IconYes size={14} /></>}
                     {testResult.verdict === 'unsure' && 'Unsure'}
                     {testResult.verdict === 'nomatch' && 'Not recognized'}
                   </span>
@@ -177,20 +165,17 @@ export default function CalibrationStudio() {
           {mic.state === 'listening' && mode === 'calibrate' && (
             <div style={{ textAlign: 'center', marginTop: 10 }}>
               <div key={flash} className={lastCaptured ? 'cal-capture' : ''} style={{ minHeight: 22 }}>
-                {lastCaptured === true && <span style={{ color: 'var(--good)', fontWeight: 700 }}>✓ captured</span>}
+                {lastCaptured === true && <span style={{ color: 'var(--good)', fontWeight: 700 }}><IconYes size={13} /> captured</span>}
                 {lastCaptured === false && <span style={{ color: 'var(--warn)' }}>skipped</span>}
                 {lastCaptured == null && <span className="muted">strum when ready…</span>}
               </div>
               <div style={{ marginTop: 4 }}><CleanlinessBadge clean={lastClean} /></div>
               {warnings.map(w => (
                 <div key={w} className="muted" style={{ marginTop: 4, fontSize: 12, color: 'var(--warn)' }}>
-                  ⚠ {signalWarningText(w, resolved.name)}
+                  <IconWarn size={12} /> {signalWarningText(w, resolved.name)}
                 </div>
               ))}
             </div>
-          )}
-          {(mic.state === 'denied' || mic.state === 'error') && (
-            <p className="muted" style={{ textAlign: 'center' }}>🎙 {mic.error ?? 'Mic unavailable'}.</p>
           )}
         </div>
       </div>
@@ -203,43 +188,13 @@ export default function CalibrationStudio() {
           <button className="button" onClick={() => clearChordProfile(chordId)} disabled={samples.length === 0}>Reset</button>
         </div>
         <div className="cal-bar"><div className="cal-bar-fill" style={{ width: `${score}%`, background: calibrated ? 'var(--good)' : 'var(--accent)' }} /></div>
-
-        {mic.state === 'listening' && (
-          <>
-            <div className="muted" style={{ marginTop: 12, fontSize: 12 }}>
-              Live vs learned — the more consistent your playing, the more they line up.
-            </div>
-            <ChromaCompare live={liveChroma} proto={protoArr} />
-          </>
-        )}
       </div>
-    </div>
-  );
-}
 
-// Two rows of 12 bars: what the mic hears right now vs the learned prototype.
-function ChromaCompare({ live, proto }: { live: Float32Array; proto: number[] | null }) {
-  const liveMax = Math.max(...Array.from(live), 1e-6);
-  const protoMax = proto ? Math.max(...proto, 1e-6) : 1;
-  const Row = ({ label, vals, max, color }: { label: string; vals: number[] | null; max: number; color: string }) => (
-    <div style={{ marginTop: 8 }}>
-      <div className="muted" style={{ fontSize: 11 }}>{label}</div>
-      <div className="chroma-bars" style={{ height: 60 }}>
-        {NOTE_NAMES.map((n, i) => (
-          <div key={n} className="chroma-bar">
-            <div className="chroma-bar-track">
-              <div className="chroma-bar-fill" style={{ height: vals ? `${Math.round((vals[i] / max) * 100)}%` : '0%', background: color }} />
-            </div>
-            <div className="chroma-bar-label">{n}</div>
-          </div>
-        ))}
-      </div>
+      {/* The same panel every exercise and /mic-test shows — the Studio has no
+          bespoke mic UI of its own. `expectedId` draws this chord's learned (or,
+          uncalibrated, theoretical) chroma as ghosts behind the live bars. */}
+      <DetectionDetails mic={mic} targets={targets} log={log}
+        names={new Map([[chordId, resolved.name]])} expectedId={chordId} />
     </div>
-  );
-  return (
-    <>
-      <Row label="Live" vals={Array.from(live)} max={liveMax} color="var(--accent)" />
-      <Row label={proto ? 'Learned' : 'Learned (no samples yet)'} vals={proto} max={protoMax} color="var(--good)" />
-    </>
   );
 }

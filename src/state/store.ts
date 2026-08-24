@@ -162,6 +162,9 @@ export type Song = {
   // Canonical YouTube video for this song, from the catalog's spotify->youtube map.
   // Cached (not user data) — a user's own link lives in the overlay's `url` and wins.
   youtubeId?: string;
+  artUrl?: string;    // album cover from the Spotify enrichment (AlbumArt falls back to oEmbed)
+  key?: number;       // 0..11 pitch class, -1/undefined = undetected
+  mode?: number;      // 1 major, 0 minor
   catalogId?: number; // CURRENT-build row id; refreshed live, never trusted long-term
   tempo?: number;     // BPM (audio feature), used to grade chord-transition speed targets
   source?: 'seed' | 'user';
@@ -211,6 +214,15 @@ export type SongOverlay = {
 export type RoadmapEntry = { done?: boolean; note?: string; playlistUrl?: string; updatedAt?: number };
 
 export const useRepertoire = () => useLocalStore<Chord[]>('reps.repertoire', []);
+
+// Move an owned chord onto a different shape (picking another fingering, saving
+// an edit). Everything downstream — exercises, the calibration gate's shapeKey
+// check — reads chord.shape, so this is the one write that matters.
+export function useSetChordShape(): (id: string, shape: ChordShape) => void {
+  const [, setRepertoire] = useRepertoire();
+  return (id, shape) =>
+    setRepertoire(prev => prev.map(c => (c.id === id ? { ...c, shape } : c)));
+}
 export const useSwapRecords = () => useLocalStore<Record<string, SwapRecord>>('reps.swaps', {});
 export const useRoutineLog = () => useLocalStore<RoutineLog[]>('reps.routineLog', []);
 export const useSongs = () => useLocalStore<Song[]>('reps.songs', []);
@@ -386,8 +398,11 @@ export function refreshSongCache(byRef: Map<string, CatalogSong>) {
       popularity: cs.popularity ?? undefined,
       spotifyId: cs.spotifyId ?? undefined,
       youtubeId: cs.youtubeId ?? undefined,
+      artUrl: cs.artUrl ?? undefined,
       catalogId: cs.id,
       tempo: cs.tempo ?? undefined,
+      key: cs.key ?? undefined,
+      mode: cs.mode ?? undefined,
     };
     if (JSON.stringify(patched) !== JSON.stringify(s)) changed = true;
     return patched;
@@ -459,6 +474,30 @@ export function ensureInDefaultPlaylist(songId: string) {
       : p);
   writeStorage('reps.playlists', next);
 }
+// Set exactly which playlists a song belongs to, creating any playlist named in
+// `newNames`. Non-hook (writeStorage notifies subscribers) so the picker can
+// commit-then-close in the same tick: a component's own useLocalStore setter defers
+// its write to a microtask and would lose it when the picker unmounts.
+export function setSongPlaylists(songId: string, playlistIds: string[], newNames: string[] = []) {
+  const want = new Set(playlistIds);
+  const list = read<Playlist[]>('reps.playlists', []);
+  const now = Date.now();
+  const created = newNames.map((name, i) => ({
+    id: `pl-${now.toString(36)}-${i}`,
+    name,
+    songIds: [songId],
+    createdAt: now + i,
+  }));
+  writeStorage('reps.playlists', [
+    ...list.map(p => {
+      const has = p.songIds.includes(songId);
+      if (has === want.has(p.id)) return p;
+      return { ...p, songIds: has ? p.songIds.filter(i => i !== songId) : [...p.songIds, songId] };
+    }),
+    ...created,
+  ]);
+}
+
 // Materialize a catalog song into reps.songs and return its id. Idempotent: an
 // existing entry with the same spotify id or the same title+artist is reused.
 // Non-hook so import flows can call it in a loop; writeStorage notifies
@@ -480,8 +519,11 @@ export function saveCatalogSong(cs: CatalogSong): string {
     popularity: cs.popularity ?? undefined,
     spotifyId: cs.spotifyId ?? undefined,
     youtubeId: cs.youtubeId ?? undefined,
+    artUrl: cs.artUrl ?? undefined,
     catalogId: cs.id,
     tempo: cs.tempo ?? undefined,
+    key: cs.key ?? undefined,
+    mode: cs.mode ?? undefined,
     source: 'seed' as const,
     addedAt: Date.now(),
   }]);

@@ -188,18 +188,50 @@ function availableChords(o: SearchOpts): { rows: Row[] } {
   return { rows: rows(sql, bind) };
 }
 
-function searchSongs(o: SearchOpts): { rows: Row[]; hasMore: boolean } {
-  const { where, bind, ftsJoin } = baseFilters(o);
-
+// Every filter the song list obeys: the shared base plus the chord toggles. Used by
+// searchSongs, countSongs and searchPool so the list, the count and the playability
+// pool can never disagree about what "matches".
+function songFilters(o: SearchOpts): { where: string[]; bind: unknown[]; ftsJoin: string } {
+  const f = baseFilters(o);
   if (o.excludeChords && o.excludeChords.length) {
     // Hide any song that uses one of the toggled-off chords.
     const col = chordCol(o.level);
-    where.push(`NOT EXISTS (
+    f.where.push(`NOT EXISTS (
       SELECT 1 FROM song_chords sc
       WHERE sc.song_id = s.id AND sc.${col} IN (SELECT value FROM json_each(?))
     )`);
-    bind.push(JSON.stringify(o.excludeChords));
+    f.bind.push(JSON.stringify(o.excludeChords));
   }
+  return f;
+}
+
+// How many songs match — the number the filter bar reports, independent of how many
+// rows are currently rendered.
+function countSongs(o: SearchOpts): { total: number } {
+  const { where, bind, ftsJoin } = songFilters(o);
+  const [r] = rows(`SELECT COUNT(*) AS n FROM songs s ${ftsJoin}
+    ${where.length ? 'WHERE ' + where.join(' AND ') : ''}`, bind);
+  return { total: Number(r?.n ?? 0) };
+}
+
+// The candidate set for the playability sort: matching songs WITH their raw
+// progression, so the main thread can score each one against the user's swap
+// history (which SQL knows nothing about). Bounded — the caller shows the bound.
+function searchPool(o: SearchOpts & { poolLimit?: number }): { rows: Row[]; total: number } {
+  const { where, bind, ftsJoin } = songFilters(o);
+  const limit = Math.max(1, Math.min(o.poolLimit ?? 1000, 5000));
+  const sql = `SELECT s.id, s.title, s.artist, s.genre, s.popularity, s.chords_json,
+      s.tempo, s.song_key, s.song_mode, s.spotify_id, s.art_url, s.youtube_id, s.progression
+    FROM songs s
+    ${ftsJoin}
+    ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+    ORDER BY s.popularity DESC
+    LIMIT ?`;
+  return { rows: rows(sql, [...bind, limit]), total: countSongs(o).total };
+}
+
+function searchSongs(o: SearchOpts): { rows: Row[]; hasMore: boolean } {
+  const { where, bind, ftsJoin } = songFilters(o);
 
   const order = o.sort === 'title' ? 's.title COLLATE NOCASE ASC'
     : o.sort === 'artist' ? 's.artist COLLATE NOCASE ASC'
@@ -291,6 +323,8 @@ self.onmessage = async (e: MessageEvent) => {
     switch (type) {
       case 'init': result = meta(); break;
       case 'search': result = searchSongs(payload as SearchOpts); break;
+      case 'count': result = countSongs(payload as SearchOpts); break;
+      case 'searchPool': result = searchPool(payload as SearchOpts & { poolLimit?: number }); break;
       case 'chords': result = availableChords(payload as SearchOpts); break;
       case 'progression': result = getProgression((payload as { id: number }).id); break;
       case 'getSong': result = getSongById((payload as { id: number }).id); break;

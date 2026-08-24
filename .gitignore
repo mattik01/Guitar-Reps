@@ -27,3 +27,4 @@ public/catalog.meta.json
 # Compiled output of the vite proxy plugins (vite imports the .ts directly)
 scripts/youtubePlaylistProxy.js
 scripts/youtubePlaylistProxy.d.ts
+.stats-transitions.mjs

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { ChordCard } from '../components/ChordCard';
+import { RoutineHeader } from '../components/RoutineHeader';
 import { cardFromChord } from '../data/chordResolve';
 import { PATTERNS, PROGRESSIONS } from '../data/progressions';
 import { useRepertoire, useRoutineLog } from '../state/store';
@@ -100,13 +100,15 @@ export default function StrumRoutine() {
 
   return (
     <div>
-      <div className="row">
-        <Link to="/" className="button">← Home</Link>
-        <h1 style={{ margin: 0 }}>Strumming routine</h1>
-      </div>
+      <RoutineHeader
+        title="Strumming"
+        backLabel="Exercise"
+        backTo="/exercise"
+        stats={<>{bpm} bpm · {pattern.name}</>}
+      />
 
       <div className="card">
-        <div className="row">
+        <div className="row settings-row">
           <label>Progression
             <select value={progressionId} onChange={e => setProgressionId(e.target.value)} style={{ marginLeft: 8 }}>
               {PROGRESSIONS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -139,7 +141,7 @@ export default function StrumRoutine() {
           <p className="muted">You don't know any of these chords yet. Pick a different progression or add chords to your repertoire.</p>
         ) : (
           <>
-            <div className="row" style={{ justifyContent: 'center', margin: '16px 0' }}>
+            <div className="stage">
               {currentChord && (
                 <ChordCard
                   variant="bare"
@@ -148,39 +150,28 @@ export default function StrumRoutine() {
                   meta={`Next: ${chordsInProgression[(currentChordIdx + 1) % chordsInProgression.length]?.name}`}
                 />
               )}
-            </div>
 
-            <div style={{ display: 'flex', justifyContent: 'center', gap: 6, fontFamily: 'monospace', fontSize: 24, margin: '12px 0' }}>
-              {patternChars.map((ch, i) => (
-                <span key={i} style={{
-                  padding: '4px 8px',
-                  borderRadius: 6,
-                  background: i === slotInBar && running ? 'var(--ink)' : 'transparent',
-                  color: i === slotInBar && running ? '#fff' : ch === '-' ? 'var(--muted)' : 'var(--ink)',
-                  minWidth: 28,
-                  textAlign: 'center',
-                  fontWeight: 700,
-                }}>
-                  {ch}
-                </span>
-              ))}
+              <div className="strum-pattern">
+                {patternChars.map((ch, i) => (
+                  <span key={i} className={
+                    (i === slotInBar && running ? 'on' : '') + (ch === '-' ? ' rest' : '')
+                  }>{ch}</span>
+                ))}
+              </div>
             </div>
           </>
         )}
 
-        <div className="footer-bar">
+        {/* One primary action; leaving is the header's job. */}
+        <div className="stage-actions">
           {running ? (
-            <button className="button big" onClick={stop}>Pause</button>
+            <button className="button primary big" onClick={stop}>Pause</button>
           ) : (
             <button className="button primary big" onClick={start} disabled={chordsInProgression.length === 0}>
               {startedAt ? 'Resume' : 'Start'}
             </button>
           )}
-          <button className="button primary" onClick={finish} disabled={!startedAt}>
-            Finish — log this
-          </button>
-          <div className="spacer" />
-          <Link to="/" className="button">Cancel</Link>
+          <button className="button big" onClick={finish} disabled={!startedAt}>Finish &amp; log</button>
         </div>
       </div>
     </div>

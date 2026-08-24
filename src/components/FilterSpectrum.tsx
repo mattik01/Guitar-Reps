@@ -34,12 +34,12 @@ export function FilterSpectrum({ getSpectrum, getSpectrumMeta, state, hp, lp, on
     if (!canvas) return;
     const css = getComputedStyle(canvas);
     const col = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
-    const cAccent = col('--accent', '#2b5bd7');
+    const cAccent = col('--accent', '#c4643c');
     const cInk = col('--ink', '#1b1b1b');
     const cLine = col('--line', '#d9d6cf');
     const cMuted = col('--muted', '#6b6b6b');
-    const cGood = col('--good', '#2e8b57');
-    const cWarn = col('--warn', '#c0690b');
+    const cGood = col('--good', '#6e8b62');
+    const cWarn = col('--warn', '#c9992b');
 
     let raf = 0;
     const logMin = Math.log(FMIN), logSpan = Math.log(FMAX) - logMin;

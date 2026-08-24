@@ -10,7 +10,7 @@ Status of the microphone chord-detection + calibration overhaul. Last updated 20
 Split what used to be one tangled "calibration" into **two separate concerns**:
 
 1. **Mic Input Tuning** *(global, per-rig)* — input sensitivity + noise filters + a live
-   meter. One shared control used in every mic screen. `src/components/MicInputTuning.tsx`,
+   meter. Lives inside the one shared `src/components/DetectionDetails.tsx`,
    backed by `micSettings` (`src/state/store.ts`).
 2. **Chord Calibration** *(per-chord, deliberate)* — a focused **Studio** where you play a
    chord cleanly so the app learns how it sounds on *your* guitar. Every chord gets a 0–100
@@ -92,14 +92,26 @@ chord's `ChordCard` chip is highlighted (`.cal-chip.needs`) next to a deep link 
 - `src/routes/CalibrationStudio.tsx` — `/calibrate/:chordId`: **Calibrate** mode (auto-captures
   clean strums via the contract, live cleanliness, score bar, Live-vs-Learned chroma) and
   **Test** mode (recognizes against the learned reference; shows `Recognized ✓` + `learned X ·
-  template Y`). Embeds `MicInputTuning`.
+  template Y`). Embeds `DetectionDetails`.
 - `src/components/FilterSpectrum.tsx` — live spectrum with draggable HP/LP cutoff lines (shown
   in the input tuning on `/mic-test`).
-- `src/components/MicDiagnostics.tsx` — the `/mic-test` diagnostics.
+- `src/components/DetectionDetails.tsx` — THE detection panel, shown identically by
+  every exercise (via `MicPanel`), `/mic-test` and the Calibration Studio. Collapsed
+  it is one row: the sensitivity gate drawn on the live level bar, plus the filters
+  switch (with the HP/LP spectrum inline when they're on). Expanded it adds the
+  live-vs-expected chroma bars, the live similarities and the raw event log;
+  `/mic-test` additionally passes `profiles` for the calibration-profiles table.
+  Expansion is `micSettings.debug`, so it is one persisted flag across all screens.
+  The expected-chroma ghosts come from `chordTargetFromProfile(...).reference` when
+  the chord is calibrated and its theoretical `template` otherwise; which one is in
+  use is labelled, because the two are NOT on the same scale. Pitch classes outside
+  the target's `expectedPcs` are drawn recessed, so stray energy reads as a defect.
+- `src/components/detectionLog.ts` — `MicLogEntry` + `strumLogDetail`, the one
+  formatter every event-log line goes through.
 
 ## Done
 
-- [x] **Phase 0** — shared `MicInputTuning` (sensitivity + filter toggle + meter).
+- [x] **Phase 0** — shared sensitivity + filter control (now part of `DetectionDetails`).
 - [x] **Phase 1** — Tier-1 DSP filters (HP ~75 / LP ~7 k, tunable), draggable sensitivity
       threshold, live spectrum with draggable cutoffs.
 - [x] **Phase 2** — `CalibrationProfile` data model + math + `npm run check:profiles`.
@@ -114,7 +126,7 @@ chord's `ChordCard` chip is highlighted (`.cal-chip.needs`) next to a deep link 
       used). Also fixed: `.chord-card` claimed `cursor: pointer` even when not clickable.
 - [x] **Phase 5** (2026-08-20) — the exercises consume the profiles: bare targets to the listener,
       `checkSignal` (quiz) / `bestOfSignal` (swap) caller-side, the calibration gate in both, and
-      passive auto-calibration fully retired. `/mic-test` and `MicDiagnostics` now read
+      passive auto-calibration fully retired. `/mic-test` and `DetectionDetails` now read
       `chordProfiles` too.
 
 L1 = `check:profiles` (57 assertions incl. the no-regression, scale-consistency, margin-boundary

@@ -1,10 +1,10 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Sparkline } from '../routines/SwapRoutine';
+import { Sparkline } from '../components/Sparkline';
 import { useRepertoire, useRoutineLog, useSwapRecords, type RoutineLog } from '../state/store';
 import { DayActivityGrid, buildDayCells, KIND_COLOR, KIND_LABEL, ROUTINE_KINDS } from '../components/DayActivityGrid';
 
-export default function Progress() {
+export default function ActivityPanel() {
   const [log] = useRoutineLog();
   const [repertoire] = useRepertoire();
   const [swaps] = useSwapRecords();
@@ -15,7 +15,6 @@ export default function Progress() {
 
   return (
     <div>
-      <h1>Progress</h1>
 
       <div className="card">
         <h3>This week</h3>

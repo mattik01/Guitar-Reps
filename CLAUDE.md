@@ -13,6 +13,8 @@ npm run build          # tsc -b && vite build
 npm run check:chords   # chord library structure + harmony
 npm run check:chroma   # templates + confusable pairs
 npm run check:profiles # calibration math, signal contract, calibration gate
+npm run check:songs    # progression sections, transitions, playability score
+npm run check:roadmap  # per-level hard requirements (owned+calibrated, swap targets, songs)
 npm run check:normalize
 ```
 

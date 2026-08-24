@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { MicMeter } from '../components/MicMeter';
-import { MicDiagnostics, strumLogDetail, type MicLogEntry } from '../components/MicDiagnostics';
+import { BackLink } from '../components/BackLink';
+import { IconMic, IconStop } from '../components/icons';
+import { DetectionDetails } from '../components/DetectionDetails';
+import { strumLogDetail, type MicLogEntry } from '../components/detectionLog';
 import { CHORD_LIBRARY, libraryPrimaryShape } from '../data/chordLibrary';
 import { useChordListener } from '../audio/useChordListener';
 import type { StrumEvent } from '../audio/chordListener';
@@ -11,8 +12,8 @@ import { useChordProfiles, useMicSettings } from '../state/store';
 // Debug/calibration page (URL-only: /mic-test). This is where the detection
 // constants in src/audio/chroma.ts + chordListener.ts get tuned against a real
 // guitar, mic, and room. Keep it around — it's also the fastest way to diagnose
-// "the mic feature stopped working on my laptop". The panels below are shared
-// with the exercises' "🔬 Detection details" toggle via <MicDiagnostics>.
+// "the mic feature stopped working on my laptop". The panel below is the SAME
+// <DetectionDetails> the exercises and the Calibration Studio show.
 
 export default function MicTest() {
   const [running, setRunning] = useState(false);
@@ -47,7 +48,7 @@ export default function MicTest() {
     setLog(prev => [entry, ...prev].slice(0, 80));
   }
 
-  const { state, error, getLevel, getLiveChroma, getSpectrum, getSpectrumMeta } = useChordListener({
+  const mic = useChordListener({
     enabled: running,
     targets,
     activationThreshold: micSettings.activationThreshold,
@@ -56,23 +57,21 @@ export default function MicTest() {
     filterLpHz: micSettings.filterLpHz,
     onStrum: (e: StrumEvent) => pushLog({ at: e.at, kind: 'strum', detail: strumLogDetail(e) }),
     onKnock: e => pushLog({ at: e.at, kind: 'knock', detail: 'percussive onset' }),
-    onDoubleKnock: e => pushLog({ at: e.at, kind: 'double-knock', detail: '🥁 double knock' }),
+    onDoubleKnock: e => pushLog({ at: e.at, kind: 'double-knock', detail: 'double knock' }),
   });
 
   return (
     <div>
       <div className="row">
-        <Link to="/" className="button">← Home</Link>
+        <BackLink to="/" label="Home" />
         <h1 style={{ margin: 0 }}>Mic test / calibration</h1>
         <div className="spacer" />
-        <button className={`button ${running ? '' : 'primary'}`} onClick={() => setRunning(r => !r)}>
-          {running ? '■ Stop' : '🎙 Start listening'}
+        <button className={`button ${running ? '' : 'primary'}`}
+          title="Strum chords, pluck single notes, knock on the body — and check the events do what you expect. Tuning constants live in src/audio/chroma.ts"
+          onClick={() => setRunning(r => !r)}>
+          {running ? <><IconStop /> Stop</> : <><IconMic /> Start listening</>}
         </button>
       </div>
-      <p className="muted">
-        Strum chords, pluck single notes, knock on the guitar body — and check the events
-        below do what you expect. Tuning constants live in <code>src/audio/chroma.ts</code>.
-      </p>
 
       <div className="card">
         <div className="row">
@@ -88,12 +87,10 @@ export default function MicTest() {
               {CHORD_LIBRARY.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </label>
-          <div className="spacer" />
-          <MicMeter getLevel={getLevel} state={state} error={error} />
         </div>
       </div>
 
-      <MicDiagnostics getLiveChroma={getLiveChroma} getLevel={getLevel} state={state} targets={targets} log={log} names={names} getSpectrum={getSpectrum} getSpectrumMeta={getSpectrumMeta} />
+      <DetectionDetails mic={mic} targets={targets} log={log} names={names} expectedId={targetA} profiles />
     </div>
   );
 }

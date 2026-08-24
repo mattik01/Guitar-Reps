@@ -182,8 +182,8 @@ export const CHORD_LIBRARY: LibraryChord[] = [
     fingerings: [{ shape: { frets: [0, 2, 0, 0, 0, 0], fingers: [null, 2, null, null, null, null] } }],
   },
   {
-    id: 'B7', name: 'B7', category: 'sevenths-open', difficulty: 5, importance: 5,
-    info: 'Four-finger dominant 7th; the V chord of the E-blues.',
+    id: 'B7', name: 'B7', category: 'sevenths-open', difficulty: 5, importance: 6,
+    info: 'Four-finger dominant 7th; the V chord of the E-blues. The only chord here that reaches a B — the change B↔E is 15th most common in the catalog.',
     fingerings: [{ shape: { frets: ['x', 2, 1, 2, 0, 2], fingers: [null, 2, 1, 3, null, 4] } }],
   },
 ];

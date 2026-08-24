@@ -1,7 +1,10 @@
 import { useMemo, useState } from 'react';
+import { IconRandom } from '../components/icons';
+import { EditButton } from '../components/EditButton';
 import { Link } from 'react-router-dom';
 import { ChordCard } from '../components/ChordCard';
 import { ChordEditor } from '../components/ChordEditor';
+import { RoutineHeader } from '../components/RoutineHeader';
 import { LibraryChordGrid } from '../components/LibraryChordGrid';
 import { CHORD_LIBRARY, materializeLibraryChord } from '../data/chordLibrary';
 import { cardFromChord } from '../data/chordResolve';
@@ -61,14 +64,15 @@ export default function NewChordRoutine() {
   if (justAdded) {
     return (
       <div>
-        <div className="row">
-          <Link to="/" className="button">← Home</Link>
-          <h1 style={{ margin: 0 }}>Added: {justAdded.name}</h1>
-          <div className="spacer" />
-          <button className="button" onClick={() => setEditing(v => !v)}>
-            ✏️ {editing ? 'Close editor' : 'Edit'}
-          </button>
-        </div>
+        <RoutineHeader
+          title={`Added: ${justAdded.name}`}
+          backLabel="Exercise"
+          backTo="/exercise"
+          stats={
+            <EditButton onClick={() => setEditing(v => !v)} active={editing}
+              title={editing ? 'Close the editor' : 'Edit this shape'} label="Edit shape" />
+          }
+        />
         {editing ? (
           <ChordEditor
             title={`Edit ${justAdded.name}`}
@@ -80,20 +84,15 @@ export default function NewChordRoutine() {
             onCancel={() => setEditing(false)}
           />
         ) : (
-          <div className="card" style={{ textAlign: 'center' }}>
-            <p>Take a minute to look at the shape, place your fingers, and strum it a few times.</p>
-            <div style={{ margin: '16px 0' }}>
-              {/* The page <h1> already names the chord. */}
-              <ChordCard variant="bare" size="xl" chord={cardFromChord(justAdded)} showName={false} />
-            </div>
-            <div className="footer-bar" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
+          <div className="card stage">
+            <div className="step-title">Place your fingers and strum it a few times</div>
+            {/* The header already names the chord. */}
+            <ChordCard variant="bare" size="xl" chord={cardFromChord(justAdded)} showName={false} />
+            <div className="stage-actions">
               <Link to={`/routine/quiz?chord=${encodeURIComponent(justAdded.id)}`} className="button primary big">
                 Quiz me on it
               </Link>
-              <button className="button big" onClick={() => setJustAdded(null)}>
-                Add another
-              </button>
-              <Link to="/" className="button">Home</Link>
+              <button className="button big" onClick={() => setJustAdded(null)}>Add another</button>
             </div>
           </div>
         )}
@@ -103,21 +102,21 @@ export default function NewChordRoutine() {
 
   return (
     <div>
-      <div className="row">
-        <Link to="/" className="button">← Home</Link>
-        <h1 style={{ margin: 0 }}>Learn a new chord</h1>
-      </div>
+      <RoutineHeader
+        title="Learn a new chord"
+        backLabel="Exercise"
+        backTo="/exercise"
+        stats={<>{available.length} in library · {repertoire.length} yours</>}
+      />
 
       <div className="card">
         <div className="row">
-          <button className="button primary big" onClick={addRandomFromLibrary} disabled={available.length === 0}>
-            🎲 Surprise me — random from library
+          <button className="button primary" onClick={addRandomFromLibrary} disabled={available.length === 0}>
+            <IconRandom /> Random chord
           </button>
-          <button className="button big" onClick={() => setCustomOpen(v => !v)}>
-            {customOpen ? 'Close custom' : '+ Add custom chord'}
+          <button className="button" onClick={() => setCustomOpen(v => !v)}>
+            {customOpen ? 'Close custom' : '+ Custom chord'}
           </button>
-          <div className="spacer" />
-          <div className="muted">{available.length} in library, {repertoire.length} in repertoire</div>
         </div>
       </div>
 
@@ -125,7 +124,9 @@ export default function NewChordRoutine() {
         <ChordEditor withCategory onSave={addCustom} onCancel={() => setCustomOpen(false)} saveLabel="Save to repertoire" />
       )}
 
-      <h2 style={{ marginTop: 20 }}>Pick one from the library</h2>
+      <div className="row section-head" style={{ marginTop: 'var(--s5)' }}>
+        <h2>Pick one from the library</h2>
+      </div>
       {available.length === 0 ? (
         <p className="muted">You've added every chord in the library. Add a custom one to expand.</p>
       ) : (

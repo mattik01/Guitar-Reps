@@ -1,4 +1,7 @@
 import { useMemo } from 'react';
+import { BackLink } from '../components/BackLink';
+import { PageHeader } from '../components/PageHeader';
+import { ProgressBar } from '../components/ProgressBar';
 import { ROADMAP_VIDEOS, youtubeUrl } from '../data/roadmapVideos';
 import { EXTRA_VIDEOS } from '../data/roadmapExtraVideos';
 import { useWatchedVideos } from '../state/store';
@@ -39,7 +42,6 @@ export default function Videos() {
 
   const total = justin.length + other.length;
   const done = [...justin, ...other].filter(v => watched[v.id]).length;
-  const pct = total === 0 ? 0 : Math.round((done / total) * 100);
 
   function toggle(videoId: string) {
     setWatched(prev => {
@@ -52,20 +54,14 @@ export default function Videos() {
 
   return (
     <div>
-      <div className="row">
-        <h1 style={{ margin: 0 }}>Videos</h1>
-        <div className="spacer" />
-        <div className="muted"><strong>{done}</strong> / {total} watched</div>
+      <PageHeader
+        title="Videos"
+        leading={<BackLink to="/roadmap" label="Roadmap" />}
+      />
+      <div style={{ marginTop: 10 }}>
+        <ProgressBar value={done} total={total} unit="watched" />
       </div>
 
-      <div className="card" style={{ marginTop: 12 }}>
-        <div style={{ height: 12, borderRadius: 6, background: 'var(--line)', overflow: 'hidden' }}>
-          <div style={{ width: `${pct}%`, height: '100%', background: 'var(--good)', transition: 'width 0.2s' }} />
-        </div>
-        <p className="muted" style={{ marginBottom: 0, marginTop: 8 }}>
-          The full video list, numbered in order. Watched ticks are shared with the Roadmap.
-        </p>
-      </div>
 
       <VideoGroup
         title="JustinGuitar — full course"

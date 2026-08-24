@@ -10,14 +10,18 @@
     "check:chords": "esbuild scripts/checkChords.ts --bundle --platform=node --format=esm | node --input-type=module",
     "check:chroma": "esbuild scripts/checkChroma.ts --bundle --platform=node --format=esm | node --input-type=module",
     "check:profiles": "esbuild scripts/checkProfiles.ts --bundle --platform=node --format=esm | node --input-type=module",
+    "check:roadmap": "esbuild scripts/checkRoadmap.ts --bundle --platform=node --format=esm | node --input-type=module",
+    "check:songs": "esbuild scripts/checkSongs.ts --bundle --platform=node --format=esm | node --input-type=module",
     "check:normalize": "esbuild scripts/checkNormalize.ts --bundle --platform=node --format=esm | node --input-type=module",
     "check:chordonomicon": "esbuild scripts/checkChordonomicon.ts --bundle --platform=node --format=esm | node --input-type=module",
     "check:youtube-import": "esbuild scripts/checkYoutubeImport.ts --bundle --platform=node --format=esm --external:better-sqlite3 --outfile=.check-yt.mjs && node .check-yt.mjs",
     "enrich:spotify": "esbuild scripts/enrichSpotify.ts --bundle --platform=node --format=esm | node --input-type=module",
-    "build:catalog": "esbuild scripts/buildCatalog.ts --bundle --platform=node --format=esm --external:better-sqlite3 | node --input-type=module"
+    "build:catalog": "esbuild scripts/buildCatalog.ts --bundle --platform=node --format=esm --external:better-sqlite3 | node --input-type=module",
+    "stats:transitions": "esbuild scripts/transitionStats.ts --bundle --platform=node --format=esm --external:better-sqlite3 --outfile=.stats-transitions.mjs && node .stats-transitions.mjs"
   },
   "dependencies": {
     "@sqlite.org/sqlite-wasm": "^3.53.0-build1",
+    "lucide-react": "^1.34.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.2"

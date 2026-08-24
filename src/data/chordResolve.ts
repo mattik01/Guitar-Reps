@@ -71,6 +71,26 @@ export function cardFromChord(c: Chord): CardChord {
   return { id: c.id, name: c.name, shape: c.shape };
 }
 
+// A chord as the app knows it, owned or not: same card either way (the grid only
+// dims the unowned ones). An owned chord keeps ITS shape — the user may have
+// edited it — but still gets the library's fingerings to swipe between, as long
+// as its shape is still one of them. A hand-edited shape drops the swiper,
+// because swiping would silently discard that edit.
+export function cardFromKnownChord(owned: Chord | null, lib: LibraryChord | undefined): CardChord {
+  if (!owned) return cardFromLibrary(lib!);
+  const fingerings = lib?.fingerings?.length
+    && lib.fingerings.some(f => sameShape(f.shape, owned.shape))
+    ? lib.fingerings
+    : undefined;
+  return { id: owned.id, name: owned.name, shape: owned.shape, fingerings };
+}
+
+function sameShape(a: ChordShape, b: ChordShape): boolean {
+  return a.frets.join(',') === b.frets.join(',')
+    && (a.baseFret ?? 1) === (b.baseFret ?? 1)
+    && a.fingers.join(',') === b.fingers.join(',');
+}
+
 export function cardFromLibrary(l: LibraryChord): CardChord {
   return { id: l.id, name: l.name, shape: libraryPrimaryShape(l), fingerings: l.fingerings };
 }

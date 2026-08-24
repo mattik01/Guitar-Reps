@@ -2,10 +2,12 @@
 // One cell per day, each showing a coloured dot per logged routine of that kind.
 import { dayKey, type RoutineKind, type RoutineLog } from '../state/store';
 
+// One paint per routine kind, so the week reads like the chord grid does.
+// Values come from the palette — never a literal hex (docs/ui.md §2).
 export const KIND_COLOR: Record<RoutineKind, string> = {
-  chord: '#2b5bd7',
-  swap: '#2e8b57',
-  strum: '#c0690b',
+  chord: 'var(--paint-terracotta)',
+  swap: 'var(--paint-teal)',
+  strum: 'var(--paint-ochre)',
 };
 
 export const KIND_LABEL: Record<RoutineKind, string> = {

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { IconWarn } from './icons';
 import { ChordCard } from './ChordCard';
 import { cardFromDraft } from '../data/chordResolve';
 import { CHORD_CATEGORIES, type ChordCategoryId } from '../data/chordCategories';
@@ -251,11 +252,11 @@ export function ChordEditor({ initialName = '', initialShape, onSave, onCancel, 
         </div>
       </div>
 
-      {error && <div style={{ color: '#b02020', marginTop: 8 }}>{error}</div>}
+      {error && <div style={{ color: 'var(--bad)', marginTop: 8 }}>{error}</div>}
 
       {calScore > 0 && (
         <div className="muted" style={{ marginTop: 8, color: 'var(--warn)' }}>
-          ⚠ This chord is calibrated ({calScore}/100). Saving a different shape clears that —
+          <IconWarn size={13} /> This chord is calibrated ({calScore}/100). Saving a different shape clears that —
           you'd need a few clean strums in the Calibration Studio to build it back up.
           (Changing only the finger numbers is fine.)
         </div>

@@ -4,6 +4,7 @@
 // data for display — so a catalog refresh never clobbers it. "Restore original" simply
 // drops the overlay, reverting to the catalog values.
 import { useMemo, useState } from 'react';
+import { IconRemove, IconRestore } from './icons';
 import {
   useSongs, useSongOverlays, useRepertoire, deleteSongEverywhere, setSongOverlay,
   mergeSong, songRefOf, type Song,
@@ -102,7 +103,7 @@ export function SongEditor({ songId, onClose }: { songId: string; onClose: () =>
           {catalogId != null && (
             <button className="button" onClick={restoreOriginal}
               title="Reset title, artist and chords to the catalog's original values">
-              ↺ Restore original
+              <IconRestore /> Restore original
             </button>
           )}
           <button className="button" onClick={onClose}>Close</button>
@@ -133,7 +134,7 @@ export function SongEditor({ songId, onClose }: { songId: string; onClose: () =>
                 <span key={i} style={{
                   display: 'inline-flex', alignItems: 'center', gap: 4,
                   padding: '4px 10px', borderRadius: 999,
-                  background: 'var(--ink)', color: '#fff', fontWeight: 700, fontSize: 13,
+                  background: 'var(--ink)', color: 'var(--accent-ink)', fontWeight: 700, fontSize: 13,
                 }}>
                   <button onClick={() => move(i, -1)} disabled={i === 0} title="Move left"
                     style={{ all: 'unset', cursor: i === 0 ? 'default' : 'pointer', opacity: i === 0 ? 0.4 : 1 }}>←</button>
@@ -141,7 +142,7 @@ export function SongEditor({ songId, onClose }: { songId: string; onClose: () =>
                   <button onClick={() => move(i, 1)} disabled={i === chords.length - 1} title="Move right"
                     style={{ all: 'unset', cursor: i === chords.length - 1 ? 'default' : 'pointer', opacity: i === chords.length - 1 ? 0.4 : 1 }}>→</button>
                   <button onClick={() => removeAt(i)} title="Remove"
-                    style={{ all: 'unset', cursor: 'pointer', marginLeft: 4 }}>✕</button>
+                    style={{ all: 'unset', cursor: 'pointer', marginLeft: 4, lineHeight: 0 }}><IconRemove size={13} /></button>
                 </span>
               ))}
             </div>

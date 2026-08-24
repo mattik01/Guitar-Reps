@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { IconAdd, IconKnock, IconMic, IconNo, IconRandom, IconTarget, IconYes } from '../components/icons';
 import { Link, useSearchParams } from 'react-router-dom';
+import { CalibrationMic } from '../components/CalibrationMic';
 import { ChordCard } from '../components/ChordCard';
+import { ChordCategorySections } from '../components/ChordCategorySections';
+import { useChordView } from '../components/ChordView';
 import { cardFromChord } from '../data/chordResolve';
 import { ChordEditor } from '../components/ChordEditor';
 import { CleanlinessBadge } from '../components/CleanlinessBadge';
-import { MicDiagnostics, strumLogDetail, type MicLogEntry } from '../components/MicDiagnostics';
-import { MicMeter } from '../components/MicMeter';
-import { MicInputTuning } from '../components/MicInputTuning';
-import { MicSettingsToggles } from '../components/MicSettingsToggles';
+import { strumLogDetail, type MicLogEntry } from '../components/detectionLog';
+import { MicPanel } from '../components/MicPanel';
+import { RoutineHeader } from '../components/RoutineHeader';
 import { useChordListener } from '../audio/useChordListener';
 import type { KnockEvent, StrumEvent } from '../audio/chordListener';
 import { type Cleanliness, type Verdict } from '../audio/chroma';
@@ -29,13 +32,14 @@ export default function ChordQuizRoutine() {
   const [repertoire, setRepertoire] = useRepertoire();
   const [, setLog] = useRoutineLog();
   const [params] = useSearchParams();
+  const { open: openChordView, openId: openChordId } = useChordView();
 
   const [chord, setChord] = useState<Chord | null>(null);
   const [phase, setPhase] = useState<Phase>('picking');
   const [asked, setAsked] = useState(0);
   const [gotRight, setGotRight] = useState(0);
   const [startedAt, setStartedAt] = useState<number | null>(null);
-  const [editing, setEditing] = useState(false);
+
   // Deep-linked chord id that isn't in the repertoire yet — prompts manual registration.
   const [registerId, setRegisterId] = useState<string | null>(null);
   // The current chord is a library chord being previewed but not yet owned: the
@@ -58,8 +62,10 @@ export default function ChordQuizRoutine() {
   const [debugLog, setDebugLog] = useState<MicLogEntry[]>([]);
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
-  const editingRef = useRef(editing);
-  editingRef.current = editing;
+  // Mic events are ignored while the chord view is open over the quiz — same
+  // reason the old in-quiz editor gated them.
+  const overlayRef = useRef(false);
+  overlayRef.current = openChordId != null;
   const countdownRef = useRef(countdown);
   countdownRef.current = countdown;
   const questionShownAtRef = useRef(0);
@@ -104,6 +110,7 @@ export default function ChordQuizRoutine() {
   const chordNames = useMemo(() => new Map(repertoire.map(c => [c.id, c.name])), [repertoire]);
   const repertoireGate = useCalibrationGate(repertoire.map(c => c.id));
   const calibratedCount = repertoire.length - repertoireGate.blocking.length;
+  const worstChordId = repertoireGate.blocking[0]?.chordId ?? null;
   function pushDebug(entry: MicLogEntry) {
     setDebugLog(prev => [entry, ...prev].slice(0, 80));
   }
@@ -136,7 +143,7 @@ export default function ChordQuizRoutine() {
 
   function handleStrum(e: StrumEvent) {
     if (micSettings.debug) pushDebug({ at: e.at, kind: 'strum', detail: strumLogDetail(e) });
-    if (phaseRef.current !== 'asking' || editingRef.current) return;
+    if (phaseRef.current !== 'asking' || overlayRef.current) return;
     if (Date.now() - questionShownAtRef.current < QUIZ_ARM_DELAY_MS) return;
     // Judge against the chord's LEARNED reference + calibrated thresholds. The
     // engine's own e.verdict only ever knows the theoretical template.
@@ -152,12 +159,11 @@ export default function ChordQuizRoutine() {
       setCountdown(QUIZ_AUTO_ADVANCE_S);
     }
     setPhase('revealed');
-    setEditing(false);
   }
 
   function handleDoubleKnock(e: KnockEvent) {
-    if (micSettings.debug) pushDebug({ at: e.at, kind: 'double-knock', detail: '🥁 double knock' });
-    if (phaseRef.current !== 'revealed' || editingRef.current) return;
+    if (micSettings.debug) pushDebug({ at: e.at, kind: 'double-knock', detail: 'double knock' });
+    if (phaseRef.current !== 'revealed' || overlayRef.current) return;
     // Flip only while the countdown is live; a knock long after is meaningless.
     if (countdownRef.current == null) return;
     setSelected(s => (s === 'got' ? 'not' : 'got'));
@@ -231,17 +237,6 @@ export default function ChordQuizRoutine() {
 
   function reveal() {
     setPhase('revealed');
-    setEditing(false);
-  }
-
-  function saveEdit(value: { name: string; shape: ChordShape }) {
-    if (!chord) return;
-    // (ChordEditor clears the calibration profile itself when the shape changed.)
-    setRepertoire(prev => prev.map(c =>
-      c.id === chord.id ? { ...c, name: value.name, shape: value.shape } : c
-    ));
-    setChord({ ...chord, name: value.name, shape: value.shape });
-    setEditing(false);
   }
 
   function gotIt() {
@@ -280,10 +275,7 @@ export default function ChordQuizRoutine() {
     const lib = libraryChordById(registerId);
     return (
       <div>
-        <div className="row">
-          <Link to="/" className="button">← Home</Link>
-          <h1 style={{ margin: 0 }}>Chord quiz</h1>
-        </div>
+        <RoutineHeader title="Chord quiz" backLabel="Exercise" backTo="/exercise" />
         <div className="card">
           <p style={{ margin: 0 }}>
             <strong>{registerId}</strong> isn’t in your repertoire yet. Register it — draw the shape
@@ -309,10 +301,7 @@ export default function ChordQuizRoutine() {
   if (repertoire.length === 0 && phase === 'picking') {
     return (
       <div>
-        <div className="row">
-          <Link to="/" className="button">← Home</Link>
-          <h1 style={{ margin: 0 }}>Chord quiz</h1>
-        </div>
+        <RoutineHeader title="Chord quiz" backLabel="Exercise" backTo="/exercise" />
         <div className="card">
           <p>Your repertoire is empty. Add a chord first.</p>
           <Link to="/routine/new" className="button primary">Learn a new chord</Link>
@@ -324,45 +313,54 @@ export default function ChordQuizRoutine() {
   if (phase === 'picking') {
     return (
       <div>
-        <div className="row">
-          <Link to="/" className="button">← Home</Link>
-          <h1 style={{ margin: 0 }}>Chord quiz</h1>
-        </div>
+        <RoutineHeader title="Chord quiz" backLabel="Exercise" backTo="/exercise" />
         <p className="muted">
           You'll see a chord name. Try to play it from memory, then reveal the diagram to check.
         </p>
 
         <div className="card">
           <div className="row">
-            <button className="button primary huge" onClick={askRandom}>
-              🎲 Start — random chord
+            <button className="button primary" onClick={askRandom}>
+              <IconRandom /> Random chord
             </button>
-            <MicSettingsToggles micSettings={micSettings} setMicSettings={setMicSettings}
-              micLabel="🎙 Auto-reveal when I strum" />
           </div>
-          <hr style={{ border: 0, borderTop: '1px solid var(--line)', margin: '16px 0' }} />
-          <div className="row">
-            <h3 style={{ margin: 0 }}>Or pick a specific chord</h3>
+          <hr className="rule" />
+          <div className="row section-head">
+            <h3>Or pick a specific chord</h3>
             <div className="spacer" />
-            <span className="muted">
-              {calibratedCount} of {repertoire.length} calibrated
-              {calibratedCount < repertoire.length && ' — the rest reveal by button'}
-            </span>
-            <Link to="/calibrate" className="button">🎯 Calibrate</Link>
+            <CalibrationMic
+              percent={repertoire.length ? (100 * calibratedCount) / repertoire.length : 0}
+              done={repertoireGate.ready}
+              // Straight to the chord that needs it most (blocking is worst-first).
+              to={worstChordId ? `/calibrate/${encodeURIComponent(worstChordId)}` : '/chords'}
+              size={30}
+              label={repertoireGate.ready
+                ? 'All calibrated'
+                : `${repertoireGate.blocking.length} calibration${repertoireGate.blocking.length === 1 ? '' : 's'} left`}
+              title={`${calibratedCount} of ${repertoire.length} chords calibrated`}
+            />
           </div>
-          <div className="grid">
-            {repertoire.map(c => (
+          {/* Same grouping as the library, so a chord sits in the same place
+              wherever you meet it. */}
+          <ChordCategorySections
+            items={repertoire}
+            categoryOf={c => c.category}
+            sortWithin={(a, b) => (a.difficulty ?? 99) - (b.difficulty ?? 99)}
+            compact
+            gridClassName="grid dense"
+            renderCard={c => (
               // diagram="none" is LOAD-BEARING: this is a memory quiz, so showing
               // the shape here would give away the answer before it's asked.
               <ChordCard
                 key={c.id}
                 chord={cardFromChord(c)}
                 diagram="none"
+                className="compact"
                 meta={`${c.perfectReps} reps`}
                 onClick={() => ask(c)}
               />
-            ))}
-          </div>
+            )}
+          />
         </div>
       </div>
     );
@@ -370,47 +368,32 @@ export default function ChordQuizRoutine() {
 
   if (!chord) return null;
 
+  const owned = repertoire.find(c => c.id === chord.id) ?? null;
+  const lib = libraryChordById(chord.id);
+
   return (
     <div>
-      <div className="row">
-        <button className="button" onClick={finish}>← Finish</button>
-        <h1 style={{ margin: 0 }}>Chord quiz</h1>
-        <div className="spacer" />
-        <div className="muted">
-          Asked <strong>{asked}</strong> · Got <strong>{gotRight}</strong>
-        </div>
-      </div>
+      <RoutineHeader
+        title="Chord quiz"
+        backLabel="Finish"
+        onBack={finish}
+        backTitle="Leave the quiz and log this session"
+        stats={<>Asked <strong>{asked}</strong> · Got <strong>{gotRight}</strong></>}
+      />
 
-      <div className="card" style={{ textAlign: 'center', padding: 40 }}>
-        <div className="muted" style={{ marginBottom: 10 }}>Play this chord:</div>
-        <div style={{ fontSize: 96, fontWeight: 900, lineHeight: 1 }}>{chord.name}</div>
+      <div className="card stage">
+        <div className="step-title">Play this chord</div>
+        <div className="stage-display">{chord.name}</div>
 
         {phase === 'asking' ? (
           <>
-            <p className="muted" style={{ marginTop: 20 }}>
-              Place your fingers, strum, check every string. Reveal when you're ready.
-            </p>
-            {micActive && mic.state === 'listening' && (
-              <>
-                <div className="row mic-listening-hint" style={{ justifyContent: 'center', marginBottom: 8 }}>
-                  <span className="muted">🎙 listening — strum when ready</span>
-                  <MicMeter getLevel={mic.getLevel} state={mic.state} error={mic.error} />
-                </div>
-                <div style={{ maxWidth: 460, margin: '0 auto 8px' }}>
-                  <MicInputTuning getLevel={mic.getLevel} state={mic.state} compact />
-                </div>
-              </>
-            )}
-            {micActive && (mic.state === 'denied' || mic.state === 'error') && (
-              <p className="muted">🎙 {mic.error ?? 'Mic unavailable'} — reveal by button as usual.</p>
-            )}
             {/* Calibration gate: rather than auto-revealing on a chord the app
                 can't reliably recognize, say so, offer the fix, and fall back to
                 the button (which is always rendered below). */}
             {micSettings.enabled && blocked && chord && (
               <div className="gate-note">
                 <div>
-                  🎙 Auto-reveal is off for <strong>{chord.name}</strong> —{' '}
+                  <IconMic size={13} /> Auto-reveal is off for <strong>{chord.name}</strong> —{' '}
                   {blocked.reason === 'shape-changed'
                     ? 'its shape changed since it was calibrated.'
                     : blocked.score > 0
@@ -419,7 +402,7 @@ export default function ChordQuizRoutine() {
                 </div>
                 <div className="row" style={{ justifyContent: 'center', marginTop: 8 }}>
                   <Link className="button primary" to={`/calibrate/${encodeURIComponent(chord.id)}`}>
-                    🎯 Calibrate {chord.name}
+                    <IconTarget size={13} /> Calibrate {chord.name}
                   </Link>
                   <span className="muted">
                     {blocked.samplesLeft > 0
@@ -429,21 +412,23 @@ export default function ChordQuizRoutine() {
                 </div>
               </div>
             )}
-            <div className="footer-bar" style={{ justifyContent: 'center' }}>
-              <button className="button primary huge" onClick={reveal} style={{ maxWidth: 420 }}>
-                Reveal diagram
-              </button>
+            <div className="stage-actions">
+              <button className="button primary big" onClick={reveal}>Reveal diagram</button>
             </div>
+            {/* The one mic area on this screen: live level + sensitivity (the same
+                control the Studio uses) sitting next to the toggles that turn it
+                on. The details panel below deliberately does NOT repeat it. */}
+
           </>
         ) : (
           <>
             {strumRevealed && verdict && (
               <>
                 <div className={`verdict-banner ${verdict === 'match' ? 'match' : verdict === 'nomatch' ? 'nomatch' : ''}`}>
-                  {verdict === 'match' && 'Sounded right ✓'}
+                  {verdict === 'match' && <>Sounded right <IconYes size={13} /></>}
                   {verdict === 'unsure' && 'Heard a strum — couldn’t tell. Judge from the diagram.'}
                   {verdict === 'nomatch' && 'Hmm — didn’t quite match'}
-                  {knockFlipped && <span className="muted" style={{ fontWeight: 400 }}> · flipped 🥁</span>}
+                  {knockFlipped && <span className="muted" style={{ fontWeight: 400 }}> · flipped <IconKnock size={12} /></span>}
                 </div>
                 {strumClean && (
                   <div style={{ marginTop: 2 }}>
@@ -452,32 +437,30 @@ export default function ChordQuizRoutine() {
                 )}
               </>
             )}
-            <div style={{ margin: '24px 0' }}>
-              {/* The 96px prompt above already names the chord. */}
+            {/* The same card the Chords grid shows — same meta, and clicking it
+                opens the shared chord view (where editing/calibrating live). */}
+            <div className="quiz-reveal">
               <ChordCard
-                variant="bare"
+                variant="feature"
                 size="lg"
                 chord={cardFromChord(chord)}
                 showName={false}
-                actions={
-                  <button
-                    className="button"
-                    onClick={() => { setCountdown(null); setEditing(v => !v); }}
-                    title="Edit this chord"
-                  >
-                    ✏️ Edit
-                  </button>
-                }
+                meta={owned
+                  ? <div>{owned.perfectReps} rep{owned.perfectReps === 1 ? '' : 's'} · yours</div>
+                  : lib
+                    ? <div>Difficulty {lib.difficulty} · Importance {lib.importance}</div>
+                    : undefined}
+                onClick={() => { setCountdown(null); openChordView(chord.id); }}
               />
             </div>
-            {!editing && (preview ? (
+            {(preview ? (
               <>
                 <div className="muted" style={{ marginBottom: 8 }}>
                   This chord isn’t in your repertoire yet.
                 </div>
-                <div className="footer-bar" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
+                <div className="stage-actions">
                   <button className="button big primary" onClick={addPreviewToRepertoire}>
-                    ➕ Add to repertoire
+                    <IconAdd /> Add to repertoire
                   </button>
                   <button className="button big" onClick={skipPreview}>
                     Don’t add
@@ -486,12 +469,12 @@ export default function ChordQuizRoutine() {
               </>
             ) : (
               <>
-                <div className="footer-bar" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
+                <div className="stage-actions">
                   <button className={`button big ${selected !== 'not' ? 'primary' : ''}`} onClick={gotIt}>
-                    ✓ Got it — next{countdown != null && selected === 'got' ? ` (${countdown})` : ''}
+                    <IconYes /> Got it — next{countdown != null && selected === 'got' ? ` (${countdown})` : ''}
                   </button>
                   <button className={`button big ${selected === 'not' ? 'primary' : ''}`} onClick={didNot}>
-                    ✗ Didn't know — next{countdown != null && selected === 'not' ? ` (${countdown})` : ''}
+                    <IconNo /> Didn't know — next{countdown != null && selected === 'not' ? ` (${countdown})` : ''}
                   </button>
                 </div>
                 {countdown != null && (
@@ -505,26 +488,13 @@ export default function ChordQuizRoutine() {
         )}
       </div>
 
-      {editing && phase === 'revealed' && (
-        <ChordEditor
-          title={`Edit ${chord.name}`}
-          calibratedChordId={chord.id}
-          initialName={chord.name}
-          initialShape={chord.shape}
-          saveLabel="Save changes"
-          onSave={saveEdit}
-          onCancel={() => setEditing(false)}
-        />
-      )}
+      <MicPanel
+        mic={mic} micSettings={micSettings} setMicSettings={setMicSettings}
+        micLabel="Auto-reveal" active={micActive}
+        targets={micTargets} log={debugLog} names={chordNames}
+        expectedId={chord?.id}
+      />
 
-      {micSettings.enabled && micSettings.debug && (
-        <MicDiagnostics getLiveChroma={mic.getLiveChroma} getLevel={mic.getLevel} state={mic.state} targets={micTargets} log={debugLog} names={chordNames} />
-      )}
-
-      <div className="footer-bar">
-        <div className="spacer" />
-        <button className="button" onClick={finish}>Finish and log</button>
-      </div>
     </div>
   );
 }

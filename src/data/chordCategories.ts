@@ -44,13 +44,13 @@ export const CHORD_CATEGORIES: ChordCategory[] = [
     id: 'barre',
     name: 'Barre Chords — Major & Minor',
     description: 'Movable E- and A-shape barre chords (the CAGED system). One of the hardest beginner hurdles — unlocks every key across the neck.',
-    roadmapLevel: 'L3–5',
+    roadmapLevel: 'L3–6',
   },
   {
     id: 'sevenths-open',
     name: 'Open Seventh Chords — dom7 / maj7 / min7',
     description: 'Four-note chords adding the 7th for a more colorful sound. Open voicings first — essential for blues and the theory behind chords.',
-    roadmapLevel: 'L4',
+    roadmapLevel: 'L2',
   },
   {
     id: 'sevenths-movable',

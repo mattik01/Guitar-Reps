@@ -6,13 +6,17 @@ type Props = {
   chordId: string;
   fingerings: Fingering[];
   size?: number;
+  // Fired when the user picks a fingering. Owned chords use it to move their
+  // stored shape to the chosen voicing — the choice index alone wouldn't, since
+  // a repertoire chord carries its own shape.
+  onSelect?: (fingering: Fingering, index: number) => void;
 };
 
 // Shows one fingering of a chord with swipe / arrow navigation between them.
 // The chosen index is persisted per chord (localStorage) via useFingeringChoice,
 // so it's remembered across visits and reused when the chord is added to a
 // repertoire. When there's only one fingering, it renders a plain diagram.
-export function FingeringViewer({ chordId, fingerings, size = 120 }: Props) {
+export function FingeringViewer({ chordId, fingerings, size = 120, onSelect }: Props) {
   const [choices, setChoices] = useFingeringChoice();
   const many = fingerings.length > 1;
   const idx = Math.min(Math.max(choices[chordId] ?? 0, 0), fingerings.length - 1);
@@ -21,6 +25,7 @@ export function FingeringViewer({ chordId, fingerings, size = 120 }: Props) {
   function select(next: number) {
     const wrapped = (next % fingerings.length + fingerings.length) % fingerings.length;
     setChoices(prev => ({ ...prev, [chordId]: wrapped }));
+    onSelect?.(fingerings[wrapped], wrapped);
   }
 
   function onPointerDown(e: PointerEvent<HTMLDivElement>) {

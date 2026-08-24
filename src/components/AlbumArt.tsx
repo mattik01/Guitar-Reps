@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { IconNote } from './icons';
 
 // Album cover for a catalog song. Prefers the stored art_url (populated by the Spotify
 // enrichment backfill); until that exists, lazily resolves Spotify's public oEmbed
@@ -42,7 +43,7 @@ export function AlbumArt({ spotifyId, artUrl, size = 52 }: {
       {src
         ? <img src={src} alt="" width={size} height={size} loading="lazy"
             style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-        : <span style={{ fontSize: size * 0.4, opacity: 0.3 }}>♪</span>}
+        : <IconNote size={size * 0.4} style={{ opacity: 0.3 }} />}
     </div>
   );
 }

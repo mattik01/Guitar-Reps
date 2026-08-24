@@ -1,9 +1,11 @@
 import { useMemo, type KeyboardEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { CalibrationMic } from './CalibrationMic';
 import { ChordDiagram } from './ChordDiagram';
 import { FingeringViewer } from './FingeringViewer';
 import { CAL_MIN_SCORE, profileScore } from '../audio/calibration';
 import { useChordProfiles } from '../state/store';
+import { paintClass } from '../data/chordPaint';
 import type { CardChord } from '../data/chordResolve';
 
 // THE single way a chord is displayed anywhere in the app — grids, pickers, and
@@ -42,9 +44,15 @@ export type ChordCardProps = {
   score?: number;                // override when the caller already computed it
   needsCalibration?: boolean;    // highlight the chip (calibration-gate contract)
 
+  // Only meaningful with a fingering swiper — see FingeringViewer.onSelect.
+  onFingeringSelect?: (fingering: NonNullable<CardChord['fingerings']>[number], index: number) => void;
+
   onClick?: () => void;
   to?: string;                   // renders the whole card as a link instead
   selected?: boolean;
+  // Greyed-back but still fully interactive — the Chords grid's "not in your
+  // repertoire yet" state. NOT `disabled`, which also kills pointer events.
+  dim?: boolean;
   disabled?: boolean;
   className?: string;
 };
@@ -63,9 +71,11 @@ export function ChordCard({
   calibration = true,
   score,
   needsCalibration = false,
+  onFingeringSelect,
   onClick,
   to,
   selected = false,
+  dim = false,
   disabled = false,
   className,
 }: ChordCardProps) {
@@ -99,8 +109,11 @@ export function ChordCard({
     'chord-card',
     variant,
     `cc-${scale}`,
+    // Chord-family colour. Identity, not state — see src/data/chordPaint.ts.
+    paintClass(chord.id),
     clickable ? 'clickable' : 'static',
     selected ? 'selected' : '',
+    dim ? 'dim' : '',
     disabled ? 'disabled' : '',
     className ?? '',
   ].filter(Boolean).join(' ');
@@ -113,7 +126,8 @@ export function ChordCard({
         <div className="chord-card-body">
           {chord.shape || useViewer ? (
             useViewer && chord.fingerings
-              ? <FingeringViewer chordId={chord.id} fingerings={chord.fingerings} size={px} />
+              ? <FingeringViewer chordId={chord.id} fingerings={chord.fingerings} size={px}
+                  onSelect={onFingeringSelect} />
               : chord.shape && <ChordDiagram shape={chord.shape} size={px} />
           ) : diagramFallback}
           {actions && <div className="chord-card-actions">{actions}</div>}
@@ -144,34 +158,27 @@ export function ChordCard({
   return <div className={cls}>{body}</div>;
 }
 
-// The per-chord calibration score, linking into the Calibration Studio. Rendered
+// The per-chord calibration state, linking into the Calibration Studio. Rendered
 // on every card so "how well does the app know this chord on my rig" is visible
-// wherever a chord is.
-//
-// `asLink` is false when the CARD is already a <Link>: an <a> inside an <a> is
-// invalid HTML and the parser would close the outer anchor, leaving a DOM that no
-// longer matches React's tree. Those cards already point at the studio anyway.
+// wherever a chord is — as the app-wide mic-in-a-ring button.
 function CalibrationChip({ chordId, score, needs, asLink }: {
   chordId: string; score: number; needs: boolean; asLink: boolean;
 }) {
   const done = score >= CAL_MIN_SCORE;
-  const cls = `cal-chip ${done ? 'good' : score > 0 ? 'partial' : 'warn'}${needs ? ' needs' : ''}`;
-  const label = score > 0 ? `${score}/100${done ? ' ✓' : ''}` : 'not calibrated';
   const title = done
-    ? 'Calibrated — open the studio to sharpen it'
-    : 'Below the score the mic exercises need — open the calibration studio';
-
-  if (!asLink) return <span className={cls} title={title}>{label}</span>;
+    ? `Calibrated (${score}/100) — open the studio to sharpen it`
+    : score > 0
+      ? `Calibration ${score}/100 — below what the mic exercises need`
+      : 'Not calibrated — open the calibration studio';
   return (
-    <Link
+    <CalibrationMic
+      percent={score}
+      done={done}
+      needs={needs}
+      asLink={asLink}
       to={`/calibrate/${encodeURIComponent(chordId)}`}
-      className={cls}
       title={title}
-      aria-label={`Calibration ${label} — calibrate this chord`}
-      // The card around this is a role=button; without both of these a chip
-      // click (or Enter on the focused chip) would also fire the card's action.
-      onClick={e => e.stopPropagation()}
-      onKeyDown={e => e.stopPropagation()}
-    >{label}</Link>
+      ariaLabel={`Calibration ${score}/100 — calibrate ${chordId}`}
+    />
   );
 }

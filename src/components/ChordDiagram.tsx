@@ -24,13 +24,14 @@ export function ChordDiagram({ shape, size = 120 }: Props) {
       height={(size * (H - 18)) / W}
       role="img"
       aria-label="chord diagram"
+      fill="var(--ink)"
     >
       {strings.map(i => (
         <line
           key={`s${i}`}
           x1={stringX(i)} y1={fretY(0)}
           x2={stringX(i)} y2={fretY(5)}
-          stroke="#000" strokeWidth={1}
+          stroke="var(--ink)" strokeWidth={1}
         />
       ))}
       {frets.map(n => (
@@ -38,7 +39,7 @@ export function ChordDiagram({ shape, size = 120 }: Props) {
           key={`f${n}`}
           x1={stringX(0)} y1={fretY(n)}
           x2={stringX(5)} y2={fretY(n)}
-          stroke="#000"
+          stroke="var(--ink)"
           strokeWidth={n === 0 && showNut ? 4 : 1}
         />
       ))}
@@ -54,7 +55,7 @@ export function ChordDiagram({ shape, size = 120 }: Props) {
         if (f === 0) {
           return (
             <circle key={`m${i}`} cx={stringX(i)} cy={20} r={4}
-              fill="none" stroke="#000" strokeWidth={1.3} />
+              fill="none" stroke="var(--ink)" strokeWidth={1.3} />
           );
         }
         return null;
@@ -68,13 +69,13 @@ export function ChordDiagram({ shape, size = 120 }: Props) {
             width={(shape.barre.toIndex - shape.barre.fromIndex) * 16 + 12}
             height={10}
             rx={5}
-            fill="#000"
+            fill="var(--paint, var(--ink))"
           />
           <text
             x={stringX(shape.barre.fromIndex)}
             y={dotY(shape.barre.fret) + 3}
             fontSize={8} fontWeight={700}
-            fill="#fff" textAnchor="middle"
+            fill="var(--panel)" textAnchor="middle"
           >
             {shape.barre.label ?? shape.fingers[shape.barre.fromIndex] ?? 'T'}
           </text>
@@ -91,12 +92,12 @@ export function ChordDiagram({ shape, size = 120 }: Props) {
         if (inBarre) return null;
         return (
           <g key={`d${i}`}>
-            <circle cx={stringX(i)} cy={dotY(f)} r={5.5} fill="#000" />
+            <circle cx={stringX(i)} cy={dotY(f)} r={5.5} fill="var(--paint, var(--ink))" />
             {shape.fingers[i] != null && (
               <text
                 x={stringX(i)} y={dotY(f) + 3}
                 fontSize={8} fontWeight={700}
-                fill="#fff" textAnchor="middle"
+                fill="var(--panel)" textAnchor="middle"
               >
                 {shape.fingers[i]}
               </text>

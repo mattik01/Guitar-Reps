@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { IconCelebrate, IconMic, IconNo, IconRandom, IconTarget, IconYes } from '../components/icons';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ChordCard } from '../components/ChordCard';
 import { cardFromChord } from '../data/chordResolve';
@@ -6,10 +7,12 @@ import { ChordEditor } from '../components/ChordEditor';
 import { CleanlinessBadge } from '../components/CleanlinessBadge';
 import { libraryChordById, materializeLibraryChord } from '../data/chordLibrary';
 import type { ChordCategoryId } from '../data/chordCategories';
-import { MicDiagnostics, strumLogDetail, type MicLogEntry } from '../components/MicDiagnostics';
-import { MicMeter } from '../components/MicMeter';
-import { MicInputTuning } from '../components/MicInputTuning';
-import { MicSettingsToggles } from '../components/MicSettingsToggles';
+import { strumLogDetail, type MicLogEntry } from '../components/detectionLog';
+import { MicPanel } from '../components/MicPanel';
+import { RoutineHeader } from '../components/RoutineHeader';
+import { TransitionFacts } from '../components/TransitionFacts';
+import { normalizeToLevel } from '../data/chordNormalize';
+import { stripShape } from '../data/songTransitions';
 import { Timer, type TimerHandle } from '../components/Timer';
 import { useChordListener } from '../audio/useChordListener';
 import type { StrumEvent } from '../audio/chordListener';
@@ -18,6 +21,7 @@ import { chordTargetFromProfile, shapeKey } from '../audio/calibration';
 import { bestOfSignal, signalFromStrum } from '../audio/signalContract';
 import { useCalibrationGate } from '../audio/useCalibrationGate';
 import { pairKey, useChordProfiles, useMicSettings, useRepertoire, useRoutineLog, useSwapRecords, type Chord, type ChordShape, type SwapRecord, type SwapAttempt } from '../state/store';
+import { Sparkline } from '../components/Sparkline';
 
 type Phase = 'picking' | 'ready' | 'running' | 'entering' | 'finished';
 
@@ -121,6 +125,10 @@ export default function SwapRoutine() {
   // clock starts (the pick click provides the user gesture for resume()).
   const micActive = micGated && (phase === 'ready' || phase === 'running');
 
+  // The exercise IS the alternation, so what you're expected to play next is
+  // whichever of the pair isn't the one just heard. Drives the chroma overlay.
+  const expectedNextId = pair ? (hearing === pair[0].name ? pair[1].id : pair[0].id) : undefined;
+
   // Counting rule: "flip counting with permissive fallback". Counting matters
   // more than classification here — a muddy strum still counts. Classification
   // is only trusted for the one thing it's good at: suppressing confidently
@@ -162,7 +170,7 @@ export default function SwapRoutine() {
     filterLpHz: micSettings.filterLpHz,
     onStrum: handleStrum,
     onKnock: e => { if (micSettings.debug) pushDebug({ at: e.at, kind: 'knock', detail: 'percussive onset' }); },
-    onDoubleKnock: e => { if (micSettings.debug) pushDebug({ at: e.at, kind: 'double-knock', detail: '🥁 double knock' }); },
+    onDoubleKnock: e => { if (micSettings.debug) pushDebug({ at: e.at, kind: 'double-knock', detail: 'double knock' }); },
   });
 
   useEffect(() => {
@@ -393,10 +401,7 @@ export default function SwapRoutine() {
     const [aId, bId] = pendingPair ?? [registerId, registerId];
     return (
       <div>
-        <div className="row">
-          <Link to="/" className="button">← Home</Link>
-          <h1 style={{ margin: 0 }}>Chord swap routine</h1>
-        </div>
+        <RoutineHeader title="Chord swap" backLabel="Exercise" backTo="/exercise" />
         <div className="card">
           <p style={{ margin: 0 }}>
             To train the <strong>{aId} ↔ {bId}</strong> swap, <strong>{registerId}</strong> needs to be
@@ -422,13 +427,10 @@ export default function SwapRoutine() {
   if (notEnough && !pair && !pendingPair) {
     return (
       <div>
-        <div className="row">
-          <Link to="/" className="button">← Home</Link>
-          <h1 style={{ margin: 0 }}>Chord swap routine</h1>
-        </div>
+        <RoutineHeader title="Chord swap" backLabel="Exercise" backTo="/exercise" />
         <div className="card">
           <p>You need at least 2 chords in your repertoire to run this routine.</p>
-          <Link to="/routine/chord" className="button primary">Go learn some chords</Link>
+          <Link to="/chords?tab=library" className="button primary">Go learn some chords</Link>
         </div>
       </div>
     );
@@ -437,20 +439,14 @@ export default function SwapRoutine() {
   if ((phase === 'picking' || !pair) && !pendingPair) {
     return (
       <div>
-        <div className="row">
-          <Link to="/" className="button">← Home</Link>
-          <h1 style={{ margin: 0 }}>Chord swap routine</h1>
-        </div>
-        <p className="muted">Pick two chords. You'll have <strong>{seconds}s</strong> to swap between them — count in your head, type the number after.</p>
-
+        <RoutineHeader title="Chord swap" backLabel="Exercise" backTo="/exercise" />
         <div className="card">
           <div className="row">
-            <button className="button primary big" onClick={pickRandom}>🎲 Random pair</button>
-            <span className="muted" style={{ fontWeight: 700 }}>60s per round</span>
-            <MicSettingsToggles micSettings={micSettings} setMicSettings={setMicSettings}
-              micLabel="🎙 Count with microphone" />
+            <button className="button primary" onClick={pickRandom}><IconRandom /> Random pair</button>
+            <div className="spacer" />
+            <span className="muted">{seconds}s per round</span>
           </div>
-          <hr style={{ border: 0, borderTop: '1px solid var(--line)', margin: '16px 0' }} />
+          <hr className="rule" />
           <ManualPicker repertoire={repertoire} swaps={swaps} onPick={pickManual} />
         </div>
 
@@ -465,14 +461,12 @@ export default function SwapRoutine() {
 
   return (
     <div className={flashing ? 'flash-done' : ''} style={{ transition: 'background 0.1s' }}>
-      <div className="row">
-        <button className="button" onClick={cancelBackToPicker}>← Pick different pair</button>
-        <h1 style={{ margin: 0 }}>{a.name} ↔ {b.name}</h1>
-        <div className="spacer" />
-        <div className="muted">
-          Best: <strong>{record?.bestCount ?? '—'}</strong> · Last: <strong>{record?.lastCount ?? '—'}</strong> · Attempts: <strong>{record?.attempts ?? 0}</strong>
-        </div>
-      </div>
+      <RoutineHeader
+        title={`${a.name} ↔ ${b.name}`}
+        backLabel="Pick different"
+        onBack={cancelBackToPicker}
+        stats={<>Best <strong>{record?.bestCount ?? '—'}</strong> · Last <strong>{record?.lastCount ?? '—'}</strong> · {record?.attempts ?? 0} attempts</>}
+      />
 
       <div className="pair">
         {[a, b].map(c => (
@@ -481,7 +475,11 @@ export default function SwapRoutine() {
             variant="feature"
             chord={cardFromChord(c)}
             needsCalibration={micSettings.enabled && gate.needs.has(c.id)}
-            footer={<RepertoireToggle chord={c} owned={owned.has(c.id)} onToggle={toggleRepertoire} />}
+            // Only a chord you DON'T own needs an action here (a deep-linked
+            // preview). "in repertoire · Remove" mid-drill is noise.
+            footer={owned.has(c.id)
+              ? undefined
+              : <RepertoireToggle chord={c} owned={false} onToggle={toggleRepertoire} />}
           />
         ))}
       </div>
@@ -489,7 +487,7 @@ export default function SwapRoutine() {
       {micSettings.enabled && pair && !gate.ready && (
         <div className="gate-note">
           <div>
-            🎙 <strong>Mic counting is off for this pair.</strong>{' '}
+            <IconMic size={13} /> <strong>Mic counting is off for this pair.</strong>{' '}
             {gate.blocking.map(bk => chordNames.get(bk.chordId) ?? bk.chordId).join(' and ')}{' '}
             {gate.blocking.length === 1 ? "isn't calibrated yet" : "aren't calibrated yet"} — without that I
             can't reliably tell your two chords apart, so I won't guess. Count in your head this round.
@@ -498,7 +496,7 @@ export default function SwapRoutine() {
             {gate.blocking.map(bk => (
               <Link key={bk.chordId} className="button primary"
                 to={`/calibrate/${encodeURIComponent(bk.chordId)}`}>
-                🎯 Calibrate {chordNames.get(bk.chordId) ?? bk.chordId}
+                <IconTarget size={13} /> Calibrate {chordNames.get(bk.chordId) ?? bk.chordId}
               </Link>
             ))}
           </div>
@@ -510,47 +508,28 @@ export default function SwapRoutine() {
 
       <Timer ref={timerRef} seconds={seconds} onComplete={onTimerComplete} />
 
-      {micActive && (
-        <>
-          <div className="row" style={{ justifyContent: 'center', marginTop: 8 }}>
-            <MicMeter getLevel={mic.getLevel} state={mic.state} error={mic.error} />
-            {phase === 'ready' && mic.state === 'listening' && (
-              <span className="muted">strum to test — counting starts with the timer</span>
-            )}
-            {phase === 'ready' && <CleanlinessBadge clean={lastClean} />}
-          </div>
-          {phase === 'ready' && mic.state === 'listening' && (
-            <div style={{ maxWidth: 460, margin: '8px auto 0' }}>
-              <MicInputTuning getLevel={mic.getLevel} state={mic.state} compact />
-            </div>
-          )}
-
-        </>
-      )}
 
       {phase === 'ready' && (
-        <div className="footer-bar">
-          <button className="button primary huge" onClick={start}>Start {seconds}s</button>
+        <div className="stage-actions">
+          <button className="button primary big" onClick={start}>Start {seconds}s</button>
         </div>
       )}
 
       {phase === 'running' && (
         <>
           {micActive && mic.state === 'listening' ? (
-            <div className="card" style={{ marginTop: 12, textAlign: 'center' }}>
-              <div className="muted">Swaps heard</div>
-              <div style={{ fontSize: 64, fontWeight: 800, lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>
-                {liveSwaps}
-              </div>
-              <div className="muted" style={{ marginTop: 6 }}>
+            <div className="card stage">
+              <div className="step-title">Swaps heard</div>
+              <div className="stage-display">{liveSwaps}</div>
+              <div className="muted">
                 {hearing ? <>Hearing: <strong>{hearing}</strong></> : 'Hearing: …'}
                 {lastClean && <> · <CleanlinessBadge clean={lastClean} showHint={false} /></>}
               </div>
             </div>
           ) : (
-            <div className="card" style={{ marginTop: 12, textAlign: 'center' }}>
-              <div style={{ fontSize: 20, fontWeight: 700 }}>Swap between the two chords — count in your head.</div>
-              <div className="muted" style={{ marginTop: 6 }}>
+            <div className="card stage">
+              <div className="step-title">Swap between the two chords — count in your head</div>
+              <div className="muted" style={{ marginTop: 'var(--s2)' }}>
                 {micSettings.enabled && !gate.ready
                   ? `Mic counting is off — ${gate.blocking.map(bk => chordNames.get(bk.chordId) ?? bk.chordId).join(' and ')} still needs calibrating. Screen will flash when the minute is up.`
                   : micSettings.enabled && (mic.state === 'denied' || mic.state === 'error')
@@ -566,11 +545,11 @@ export default function SwapRoutine() {
       )}
 
       {phase === 'entering' && (
-        <div className="card" style={{ marginTop: 12 }}>
-          <h2 style={{ marginTop: 0, textAlign: 'center' }}>Time's up — how many did you count?</h2>
+        <div className="card stage">
+          <div className="step-title">Time's up — how many did you count?</div>
           {micCounted != null && (
-            <p className="muted" style={{ textAlign: 'center', marginTop: 0 }}>
-              🎙 Mic counted <strong>{micCounted}</strong> — adjust if it's off.
+            <p className="muted" style={{ marginTop: 'var(--s2)' }}>
+              <IconMic size={13} /> Mic counted <strong>{micCounted}</strong> — adjust if it's off.
             </p>
           )}
           <input
@@ -585,26 +564,28 @@ export default function SwapRoutine() {
             onKeyDown={e => { if (e.key === 'Enter') saveCount(); }}
             placeholder="0"
           />
-          <div className="footer-bar">
-            <button className="button" onClick={cancelAttempt}>Discard — bad attempt</button>
-            <div className="spacer" />
-            <button className="button primary huge" onClick={saveCount} disabled={entered === '' || !Number.isFinite(parseInt(entered, 10))}>
+          <div className="stage-actions">
+            <button className="button primary big" onClick={saveCount} disabled={entered === '' || !Number.isFinite(parseInt(entered, 10))}>
               Save
             </button>
+            <button className="button" onClick={cancelAttempt}>Discard</button>
           </div>
         </div>
       )}
 
       {phase === 'finished' && savedCount != null && (
         <>
-          <div style={{ textAlign: 'center', fontSize: 26, fontWeight: 800, margin: '10px 0' }}>
-            {savedCount} swaps{priorBest == null || savedCount > priorBest ? ' — new record 🎉' : ''}
+          <div className="card stage">
+            <div className="stage-display">{savedCount}</div>
+            <div className="step-title">
+              swaps{priorBest == null || savedCount > priorBest ? <> — new record <IconCelebrate size={14} /></> : ''}
+            </div>
           </div>
           {micCounted != null && (
             <p className="muted" style={{ textAlign: 'center', marginTop: -4 }}>
               {micCounted === savedCount
-                ? '🎙 The mic agreed with you exactly.'
-                : `🎙 The mic counted ${micCounted} — ${Math.abs(savedCount - micCounted)} ${
+                ? 'The mic agreed with you exactly.'
+                : `The mic counted ${micCounted} — ${Math.abs(savedCount - micCounted)} ${
                     micCounted < savedCount ? 'short' : 'over'}.`}
             </p>
           )}
@@ -618,21 +599,24 @@ export default function SwapRoutine() {
               </div>
             </div>
           )}
-          <div className="footer-bar">
-            <button className="button" onClick={againSame}>Again — same pair</button>
-            <button className="button" onClick={() => { setPair(randomPair(repertoire)); setPhase('ready'); resetRoundState(); timerRef.current?.reset(); }}>
-              Different random pair
+          {/* The header already carries "Pick different" and the way out. */}
+          <div className="stage-actions">
+            <button className="button primary big" onClick={againSame}>Again — same pair</button>
+            <button className="button big" onClick={() => { setPair(randomPair(repertoire)); setPhase('ready'); resetRoundState(); timerRef.current?.reset(); }}>
+              Different pair
             </button>
-            <div className="spacer" />
-            <button className="button" onClick={cancelBackToPicker}>Pick different</button>
-            <Link to="/" className="button primary">Home</Link>
           </div>
         </>
       )}
 
-      {micSettings.enabled && micSettings.debug && (
-        <MicDiagnostics getLiveChroma={mic.getLiveChroma} getLevel={mic.getLevel} state={mic.state} targets={micTargets} log={debugLog} names={chordNames} />
-      )}
+      <MicPanel
+        mic={mic} micSettings={micSettings} setMicSettings={setMicSettings}
+        micLabel="Count with microphone" active={micActive}
+        targets={micTargets} log={debugLog} names={chordNames}
+        expectedId={expectedNextId}
+      >
+        {phase === 'ready' && micActive && <CleanlinessBadge clean={lastClean} />}
+      </MicPanel>
     </div>
   );
 }
@@ -645,7 +629,7 @@ function RepertoireToggle({ chord, owned, onToggle }: {
   return (
     <div className="row" style={{ justifyContent: 'center', gap: 8, marginTop: 10 }}>
       <span style={{ color: owned ? 'var(--good)' : 'var(--warn)', fontWeight: 700 }}>
-        {owned ? '✓ in repertoire' : '✗ not in repertoire'}
+        {owned ? <><IconYes size={12} /> in repertoire</> : <><IconNo size={12} /> not in repertoire</>}
       </span>
       <button className="button" onClick={() => onToggle(chord)}>
         {owned ? '− Remove' : '+ Add'}
@@ -682,7 +666,8 @@ function ManualPicker({ repertoire, swaps, onPick }: {
         {rec ? `Best ${rec.bestCount} · Last ${rec.lastCount} · ${rec.attempts}×` : 'Never tried'}
       </div>
       <div className="spacer" />
-      <button className="button primary" disabled={!a || !b || a === b} onClick={() => onPick(a, b)}>
+      {/* One primary per screen — Random pair owns it. */}
+      <button className="button" disabled={!a || !b || a === b} onClick={() => onPick(a, b)}>
         Use this pair
       </button>
     </div>
@@ -697,21 +682,27 @@ function TrainedPairsList({ swaps, repertoire, onPick }: {
   const names = useMemo(() => new Map(repertoire.map(c => [c.id, c.name])), [repertoire]);
   const list = Object.values(swaps).sort((x, y) => y.lastAt - x.lastAt);
   if (list.length === 0) return null;
+  // The pair's catalog identity is its base triads, so Am7↔Cmaj7 reads the same
+  // frequency and roadmap targets as Am↔C — the same change either way.
+  const base = (id: string) => normalizeToLevel(stripShape(names.get(id) ?? id) || id, 'base');
   return (
     <div className="card" style={{ marginTop: 16 }}>
       <h3>Pairs you've trained</h3>
       <div className="col">
         {list.map(r => (
-          <div key={r.pairKey} className="row" style={{ borderTop: '1px solid var(--line)', paddingTop: 8 }}>
-            <div style={{ fontWeight: 700 }}>
-              {names.get(r.chordA) ?? r.chordA} ↔ {names.get(r.chordB) ?? r.chordB}
+          <div key={r.pairKey} className="col" style={{ gap: 2, borderTop: '1px solid var(--line)', paddingTop: 8 }}>
+            <div className="row">
+              <div style={{ fontWeight: 700 }}>
+                {names.get(r.chordA) ?? r.chordA} ↔ {names.get(r.chordB) ?? r.chordB}
+              </div>
+              <div className="muted">best {r.bestCount} · last {r.lastCount} · {r.attempts}×</div>
+              <div style={{ minWidth: 120 }}>
+                <Sparkline history={r.history} small />
+              </div>
+              <div className="spacer" />
+              <button className="button" onClick={() => onPick(r.chordA, r.chordB)}>Train</button>
             </div>
-            <div className="muted">best {r.bestCount} · last {r.lastCount} · {r.attempts}×</div>
-            <div style={{ minWidth: 120 }}>
-              <Sparkline history={r.history} small />
-            </div>
-            <div className="spacer" />
-            <button className="button" onClick={() => onPick(r.chordA, r.chordB)}>Train</button>
+            <TransitionFacts a={base(r.chordA)} b={base(r.chordB)} />
           </div>
         ))}
       </div>
@@ -729,35 +720,8 @@ function micAccuracy(history: SwapAttempt[]) {
   const exact = scored.filter(h => h.micCount === h.count).length;
   const worst = scored.reduce((m, h) => Math.max(m, Math.abs(h.count - h.micCount!)), 0);
   return (
-    <> · 🎙 mic exact on <strong>{exact}/{scored.length}</strong>
+    <> · <IconMic size={12} /> mic exact on <strong>{exact}/{scored.length}</strong>
       {worst > 0 ? ` · worst miss ${worst}` : ''}</>
-  );
-}
-
-export function Sparkline({ history, small = false }: { history: { count: number; at: number }[]; small?: boolean }) {
-  if (history.length === 0) return null;
-  const max = Math.max(...history.map(h => h.count), 1);
-  const h = small ? 24 : 48;
-  const barW = small ? 8 : 14;
-  const gap = 2;
-  return (
-    <div style={{ display: 'flex', alignItems: 'flex-end', gap, height: h }}>
-      {history.map((item, i) => {
-        const isLast = i === history.length - 1;
-        const isBest = item.count === max;
-        return (
-          <div key={i}
-            title={`${item.count} on ${new Date(item.at).toLocaleString()}`}
-            style={{
-              width: barW,
-              height: Math.max(3, (item.count / max) * h),
-              background: isBest ? 'var(--good)' : isLast ? 'var(--accent)' : 'var(--ink)',
-              borderRadius: 2,
-            }}
-          />
-        );
-      })}
-    </div>
   );
 }
 
