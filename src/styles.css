@@ -36,6 +36,18 @@
   --paint-plum: #7a4b63;
   --paint-indigo: #3c4a7a;
 
+  /* Roadmap difficulty ramp (osu!-style): each level owns a colour, and the
+     ramp — cool & light → warm → hot → deep → ink — is what reads as "harder".
+     Same gouache inks as --paint-*, ordered instead of assigned by family. */
+  --level-1: #5f9a92;   /* soft teal   */
+  --level-2: #6e8b62;   /* sage        */
+  --level-3: #c9992b;   /* ochre       */
+  --level-4: #c4643c;   /* terracotta  */
+  --level-5: #a33b2e;   /* brick red   */
+  --level-6: #7a4b63;   /* plum        */
+  --level-7: #3c4a7a;   /* indigo      */
+  --level-8: #2b2723;   /* ink         */
+
   /* Spacing — 4px base. Use the token, never the number (docs/ui.md §2). */
   --s1: 4px;
   --s2: 8px;
@@ -288,11 +300,12 @@ h3 { margin: 14px 0 6px; font-size: 16px; }
   .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-/* Each chord family is painted its own colour via --paint (set by the
-   `paint-*` class below). That colour is IDENTITY — it tints the card's
-   border, name and diagram dots, and never means "clickable". */
+/* Each chord is painted the colour of its roadmap level via --paint (set by
+   the `level-*` class — see src/data/chordPaint.ts). That colour says how far
+   along the chord is; it tints the card's border, name and diagram dots, and
+   never means "clickable". */
 .chord-card {
-  --paint: var(--paint-terracotta);
+  --paint: var(--level-1);
   background: var(--panel);
   border: var(--bw) solid color-mix(in oklab, var(--paint) 38%, var(--line));
   border-radius: var(--r-md);
@@ -301,6 +314,39 @@ h3 { margin: 14px 0 6px; font-size: 16px; }
   flex-direction: column;
   align-items: center;
   gap: 4px;
+  position: relative;   /* for .chord-card-legend */
+}
+
+/* A label riding ON the top outline, like a fieldset legend: the card's own
+   background masks the border behind it, so the outline reads as splitting to
+   make room. It grows with its text and then ellipsises — deliberately NOT
+   inside the card, because anything in the flow would change the card's height
+   and shuffle the grid as marks are added. */
+.chord-card-legend {
+  position: absolute;
+  /* An absolutely-positioned child is placed against the PADDING box, which
+     starts inside the border — so top:0 would sit a full border-width low.
+     Pull back half a border to land on the outline's centre line. */
+  top: calc(var(--bw) / -2);
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-width: calc(100% - var(--s5));
+  padding: 0 var(--s2);
+  background: var(--panel);
+  border: var(--bw) solid color-mix(in oklab, var(--paint) 38%, var(--line));
+  border-radius: var(--r-pill);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  line-height: 15px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chord-card.selected > .chord-card-legend {
+  border-color: var(--paint);
+  color: var(--paint);
 }
 /* Only cards that actually DO something claim to be clickable. */
 .chord-card.clickable { cursor: pointer; }
@@ -319,6 +365,16 @@ a.chord-card { color: inherit; text-decoration: none; }
   letter-spacing: -0.01em;
 }
 .chord-card .meta { color: var(--muted); font-size: var(--fs-sm); }
+/* Reset out of the display face — this is a number, not part of the name. */
+.chord-card .name-aside {
+  margin-left: var(--s2);
+  font-family: var(--font-mono);
+  font-variation-settings: normal;
+  font-size: var(--fs-md);
+  font-weight: 700;
+  color: var(--accent-2);
+  letter-spacing: 0;
+}
 
 /* Frame variants. `feature` replaces the hand-rolled `.card` + inline
    flex-column-center that the studio / swap pair / quiz reveal each repeated. */
@@ -333,14 +389,66 @@ a.chord-card { color: inherit; text-decoration: none; }
 
 .chord-card.selected { border-color: var(--paint); box-shadow: inset 0 0 0 2px var(--paint); }
 
-/* The paints. Assigned by chord family in src/data/chordPaint.ts — the grid
-   should read as a palette, not a spreadsheet. */
-.paint-terracotta { --paint: var(--paint-terracotta); }
-.paint-ochre      { --paint: var(--paint-ochre); }
-.paint-sage       { --paint: var(--paint-sage); }
-.paint-teal       { --paint: var(--paint-teal); }
-.paint-plum       { --paint: var(--paint-plum); }
-.paint-indigo     { --paint: var(--paint-indigo); }
+/* "Click me" — used when a screen needs one chord chosen and none is. Grows a
+   little and pulses a ring in the card's own paint; z-index so the growth is
+   not clipped by its neighbours in the grid. */
+.chord-card.hint {
+  border-color: var(--paint);
+  z-index: 1;
+  /* The growth is CONSTANT and only the ring pulses. Animating the scale makes
+     the card a moving click target — harder to hit, and it never settles for
+     anything driving the page. */
+  transform: scale(1.05);
+  animation: card-hint 1.5s ease-in-out infinite;
+}
+@keyframes card-hint {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--paint) 55%, transparent); }
+  50%      { box-shadow: 0 0 0 8px color-mix(in oklab, var(--paint) 0%, transparent); }
+}
+/* Motion is the attention-getter, so when it is unwelcome the emphasis has to
+   be carried by something static rather than simply vanishing. */
+@media (prefers-reduced-motion: reduce) {
+  .chord-card.hint {
+    animation: none;
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--paint) 35%, transparent);
+  }
+}
+
+/* Chords take their --paint from the roadmap ramp (.level-1 … .level-8, defined
+   with the roadmap level cards below), assigned in src/data/chordPaint.ts.
+   A chord with no roadmap level — one you registered yourself — stays neutral
+   rather than claiming a rung on the ramp. */
+.level-none { --paint: var(--muted); }
+
+/* A roadmap level card wears its level's colour: a painted edge and title.
+   Identity + difficulty, never "clickable" (that stays --accent, docs/ui.md §2). */
+.level-card {
+  --paint: var(--level-1);
+  border-color: color-mix(in oklab, var(--paint) 38%, var(--line));
+  border-left-width: 6px;
+  border-left-color: var(--paint);
+}
+.level-card > .row > h3 { color: var(--paint); }
+.level-1 { --paint: var(--level-1); }
+.level-2 { --paint: var(--level-2); }
+.level-3 { --paint: var(--level-3); }
+.level-4 { --paint: var(--level-4); }
+.level-5 { --paint: var(--level-5); }
+.level-6 { --paint: var(--level-6); }
+.level-7 { --paint: var(--level-7); }
+.level-8 { --paint: var(--level-8); }
+
+/* A level badge — the roadmap level a thing belongs to, in that level's ink.
+   Pair with a `level-*` class; identity/difficulty, never a control. */
+.level-chip {
+  padding: 0 5px;
+  border-radius: var(--r-sm);
+  white-space: nowrap;
+  font-weight: 700;
+  border: 1px solid color-mix(in oklab, var(--paint) 55%, var(--line));
+  color: var(--paint);
+  background: color-mix(in oklab, var(--paint) 8%, transparent);
+}
 .chord-card.disabled { opacity: 0.45; pointer-events: none; }
 
 .chord-card-body { position: relative; width: 100%; display: flex; justify-content: center; }
@@ -926,6 +1034,12 @@ a.cal-mic:hover { border-color: var(--ink); background: var(--panel-2); }
 }
 .routine-icon { font-size: 40px; line-height: 1; }
 .routine-card h2 { margin: var(--s1) 0; font-size: var(--fs-xl); }
+/* An exercise card that belongs to a roadmap level wears that level's ink, the
+   same way a chord card does — tinted edge and title, difficulty not state. */
+/* No --paint default here: a two-class rule would outrank the single-class
+   .level-N that carries the ramp, and every painted card is given one. */
+.routine-card.painted { border-color: color-mix(in oklab, var(--paint) 38%, var(--line)); }
+.routine-card.painted h2 { color: var(--paint); }
 /* A routine that exists but can't run yet (missing chords) — still visible, not clickable. */
 .routine-card.unavailable { opacity: 0.55; }
 
@@ -1048,3 +1162,285 @@ a.cal-mic:hover { border-color: var(--ink); background: var(--panel-2); }
 /* A row of labelled inputs configuring a routine before it runs. */
 .settings-row label { display: inline-flex; align-items: center; gap: var(--s2); font-size: var(--fs-md); }
 .settings-row select, .settings-row input { margin-left: 0 !important; }
+
+/* ---------------------------------------------------------------------------
+   Picking: the six-string strip (PickStrip) and the Pick Lab (/pick-test).
+   The strip is the one per-string display in the app; states are IDENTITY,
+   so they use the semantic colours, never --accent (docs/ui.md §2).
+   ------------------------------------------------------------------------ */
+.pick-strip {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: var(--s1);
+  max-width: 420px;
+  margin: var(--s3) auto;
+}
+.pick-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: var(--s2) var(--s1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  font: inherit;
+  color: var(--ink);
+}
+button.pick-cell { cursor: pointer; }
+.pick-cell-string { font-size: var(--fs-md); font-weight: 700; }
+.pick-cell-note { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted); }
+.pick-cell.muted { background: var(--panel-2); color: var(--muted); border-style: dashed; }
+.pick-cell.target { border-color: var(--accent-2); border-width: 2px; }
+.pick-cell.correct { border-color: var(--good); background: color-mix(in srgb, var(--good) 12%, var(--panel)); }
+.pick-cell.wrong { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--panel)); }
+.pick-cell.unsure { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--panel)); }
+
+.pick-table { width: 100%; border-collapse: collapse; font-size: var(--fs-md); }
+.pick-table th, .pick-table td {
+  text-align: left;
+  padding: 3px var(--s2);
+  border-bottom: 1px solid var(--line-soft);
+}
+.pick-table td.num { font-family: var(--font-mono); text-align: right; }
+.pick-table tr.wrong td { color: var(--bad); }
+.pick-table tr.unsure td { color: var(--warn); }
+
+/* Tab notation (PickTab). Standard orientation: high e on the top line.
+   The six string lines are drawn as row borders on the cells, so a long
+   sequence scrolls horizontally without the lines breaking. */
+.tab {
+  /* One place the six string rows' height is defined, so the label column, the
+     note columns and the empty state cannot drift apart by a pixel. */
+  --tab-rows: 216px;   /* 6 × 32px + the 24px direction row */
+  display: flex;
+  gap: var(--s2);
+  align-items: stretch;
+  margin: var(--s3) 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-lg);
+}
+.tab-strings {
+  display: grid;
+  grid-template-rows: repeat(6, 32px) 24px;
+  height: var(--tab-rows);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  text-align: right;
+  flex: 0 0 auto;
+}
+.tab-strings span { line-height: 32px; }
+.tab-scroll {
+  display: flex;
+  overflow-x: auto;
+  flex: 1 1 auto;
+  /* A FIXED height that already contains the scrollbar lane.
+     Two separate things would otherwise change this row's height and jump the
+     page: an empty sequence (no columns at all), and a long one (a horizontal
+     scrollbar appearing). The lane is reserved whether or not a scrollbar is
+     drawn — note headless Chromium uses overlay scrollbars that take no space,
+     so this difference is invisible to the browser tests and only shows up on a
+     real desktop. */
+  height: calc(var(--tab-rows) + 16px);
+  box-sizing: border-box;
+}
+.tab-col {
+  display: grid;
+  grid-template-rows: repeat(6, 32px) 24px;
+  flex: 0 0 auto;
+  min-width: 36px;
+  text-align: center;
+}
+.tab-cell {
+  line-height: 32px;
+  /* The string line itself — drawn through the middle of every cell. */
+  background: linear-gradient(var(--line), var(--line)) center / 100% 1px no-repeat;
+  color: var(--muted);
+}
+.tab-cell.on {
+  color: var(--ink);
+  font-weight: 700;
+  font-size: var(--fs-xl);
+  background: var(--panel);   /* the number sits ON the string, not behind it */
+  border-radius: 3px;
+}
+.tab-dir { color: var(--muted); font-size: var(--fs-xl); line-height: 24px; }
+.tab-col.now .tab-cell.on {
+  background: var(--accent-2);
+  color: var(--accent-ink);
+}
+.tab-col.now .tab-dir { color: var(--accent-2); }
+
+/* What KIND of exercise a card is. Deliberately UNPAINTED: the card it sits on
+   already wears its roadmap level's ink, and a second hue there would read as a
+   second difficulty scale. Never --accent either (docs/ui.md §2.1). */
+.kind-chip {
+  display: inline-block;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px var(--s2);
+  border-radius: var(--r-pill);
+}
+.kind-chip { color: var(--muted); border: 1px solid var(--line); }
+
+
+/* Tempo dial (BpmDial): a metronome inside a curved slider. The filled arc is
+   --accent-2 (the live value, same as PickTab's current column); the handle is
+   --accent because the handle is the part you press. */
+.bpm-dial { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.bpm-dial svg { touch-action: none; cursor: pointer; border-radius: 50%; }
+.bpm-dial svg:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bpm-track { fill: none; stroke: var(--line); stroke-width: 7; stroke-linecap: round; }
+.bpm-fill  { fill: none; stroke: var(--accent-2); stroke-width: 7; stroke-linecap: round; }
+.bpm-handle { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
+.bpm-glyph { color: var(--ink); }
+.bpm-number {
+  width: 62px;
+  /* Fixed, not content-sized: this input sits directly above the Start/Stop
+     button, and a couple of pixels of reflow here nudges the whole control
+     column every time the run starts. */
+  height: 32px;
+  box-sizing: border-box;
+  text-align: center;
+  font-family: var(--font-display);
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  padding: 0 2px;
+}
+.bpm-number:hover, .bpm-number:focus { border-color: var(--line); background: var(--panel); }
+
+/* One attempt in a picking ledger. */
+.ledger-row { gap: var(--s2); font-size: var(--fs-md); border-top: 1px solid var(--line-soft); padding-top: 4px; }
+.ledger-clean { color: var(--good); font-weight: 700; }
+
+/* A sparkline sitting inside a centred card (the picking ladder's cards). */
+.card-spark { display: flex; justify-content: center; margin-top: var(--s1); }
+
+/* Card-sized sample of a sequence: smaller rows, no direction row, no scroll. */
+.tab.compact { --tab-rows: 78px; margin: var(--s2) 0 var(--s1); font-size: var(--fs-sm); gap: var(--s1); }
+.tab.compact .tab-strings { grid-template-rows: repeat(6, 13px); height: var(--tab-rows); font-size: 9px; }
+.tab.compact .tab-strings span { line-height: 13px; }
+.tab.compact .tab-scroll { overflow: hidden; justify-content: center; height: var(--tab-rows); }
+.tab.compact .tab-col { grid-template-rows: repeat(6, 13px); min-width: 15px; }
+.tab.compact .tab-cell { line-height: 13px; }
+.tab.compact .tab-cell.on { font-size: var(--fs-sm); }
+
+/* The exercise's top block: tempo + button on the left, chord/tab/status on the
+   right. Identical in every phase, so Start and Stop never shuffle the page. */
+/* stretch, not center: a centred column re-centres itself on any height change
+   inside it, so a pixel of reflow in the tempo field nudged the dial every time
+   the run started. Stretched, the column's box is the tab's height and only its
+   contents are centred within it. */
+.pick-stage { display: flex; gap: var(--s4); align-items: stretch; }
+.pick-controls {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: var(--s2);
+  flex: 0 0 auto;
+}
+.pick-controls .button { width: 100%; }
+/* min-width:0 is load-bearing: without it the flex item refuses to shrink and
+   the tab's own horizontal scroll never engages. */
+.pick-main { flex: 1 1 auto; min-width: 0; }
+/* A FIXED box, not a min-height. The card inside changes height — it gains a
+   "2 of 6" line with more than one chord, and disappears entirely when the
+   progression is cleared — and any of that would shift everything below it.
+   Constant box, contents centred inside. */
+.pick-chord {
+  display: flex; align-items: center; justify-content: center;
+  gap: var(--s5);
+  height: 250px;
+}
+
+/* What is coming next, beside the chord you are on: smaller and recessed, so it
+   reads as preview rather than as another thing to play right now. Recessed via
+   opacity here on purpose — ChordCard's `dim` already means "not in your
+   repertoire", and reusing it would say the wrong thing. */
+.pick-next { display: flex; align-items: flex-start; gap: var(--s3); opacity: 0.45; }
+.pick-next-item { display: flex; flex-direction: column; align-items: center; }
+.pick-status {
+  display: flex; align-items: center; justify-content: center;
+  /* Tall enough for the answer buttons, so the row does not grow when the
+     question replaces the counter. */
+  gap: var(--s3); min-height: 44px;
+}
+
+/* The picking screen's chord section: a header that stays put and a body that
+   folds away, so the exercise itself is not buried under the whole library. */
+.picker-toggle {
+  display: inline-flex; align-items: center; gap: var(--s1);
+  background: none; border: 0; padding: 0; cursor: pointer; color: var(--ink);
+}
+.picker-toggle h3 { margin: 0; font-size: 15px; }
+.picker-toggle:hover { color: var(--accent); }
+.picker-controls { gap: var(--s2); margin-bottom: var(--s3); }
+/* Fixed width: this button's label changes between "Custom progression" and
+   "Done — N chords", and a button that resizes as you click chords drags the
+   controls beside it around. */
+.picker-controls .btn-choose { min-width: 200px; }
+
+/* While a named progression IS the selection, say so on the control. */
+.button.chosen { border-color: var(--paint-teal); color: var(--paint-teal); }
+
+/* A menu that behaves like a select but can hold controls — each saved
+   progression carries its own delete. */
+.menu-wrap { position: relative; display: inline-flex; }
+.menu-wrap > .button { max-width: 260px; }
+.menu-wrap > .button > :first-child {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.menu {
+  position: absolute;
+  top: calc(100% + var(--s1));
+  left: 0;
+  z-index: 20;
+  min-width: 100%;
+  max-width: 340px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: var(--bw) solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.10);
+  padding: var(--s1);
+}
+.menu-row { display: flex; align-items: center; gap: 2px; border-radius: var(--r-sm); }
+.menu-row:hover { background: var(--panel-2); }
+.menu-row.on { background: color-mix(in oklab, var(--paint-teal) 12%, var(--panel)); }
+.menu-item {
+  flex: 1 1 auto;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: var(--s2);
+  font: inherit;
+  font-size: var(--fs-md);
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* The bin glyph, wherever something user-made can be deleted (menu rows,
+   ledger rows) — muted until you reach for it, then --bad. */
+.icon-del {
+  flex: 0 0 auto;
+  background: none; border: 0; padding: var(--s1) var(--s2);
+  color: var(--muted); cursor: pointer; line-height: 0;
+  border-radius: var(--r-sm);
+}
+.icon-del:hover { color: var(--bad); background: color-mix(in oklab, var(--bad) 12%, transparent); }
+.menu-sep { height: 1px; background: var(--line); margin: var(--s1) var(--s2); }
+
+/* While a custom progression is being built, the grid is a numbering surface —
+   the cursor and the badge say so, and clicking adds a position rather than
+   opening the chord. */
+.grid.dense.choosing .chord-card { cursor: copy; }
+.grid.dense.choosing .chord-card.selected .meta {
+  color: var(--accent-2);
+  font-weight: 700;
+  font-family: var(--font-mono);
+}

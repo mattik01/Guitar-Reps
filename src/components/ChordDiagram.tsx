@@ -3,9 +3,15 @@ import type { ChordShape } from '../state/store';
 type Props = {
   shape: ChordShape;
   size?: number;
+  // Light up ONE string (0 = low E … 5 = high e). The single place per-string
+  // state is drawn, so the pick lab and the picking routine cannot drift apart.
+  // Drawn in --accent-2, the same "this one, now" colour PickTab marks its
+  // current column with — NOT the chord's paint, which is identity (which chord
+  // family this is) and would say the wrong thing here.
+  highlightString?: number | null;
 };
 
-export function ChordDiagram({ shape, size = 120 }: Props) {
+export function ChordDiagram({ shape, size = 120, highlightString = null }: Props) {
   const W = 100;
   const H = 120;
   const baseFret = shape.baseFret ?? 1;
@@ -31,7 +37,8 @@ export function ChordDiagram({ shape, size = 120 }: Props) {
           key={`s${i}`}
           x1={stringX(i)} y1={fretY(0)}
           x2={stringX(i)} y2={fretY(5)}
-          stroke="var(--ink)" strokeWidth={1}
+          stroke={i === highlightString ? 'var(--accent-2)' : 'var(--ink)'}
+          strokeWidth={i === highlightString ? 3 : 1}
         />
       ))}
       {frets.map(n => (

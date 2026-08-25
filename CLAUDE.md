@@ -2,7 +2,9 @@
 
 Local-first React 18 + Vite SPA. No backend; all state is `localStorage` via
 `useLocalStore` (`src/state/store.ts`). See `docs/mic-calibration.md` for the
-microphone/calibration architecture and `guitar-roadmap.md` for the practice model.
+microphone/calibration architecture, `docs/pick-detection.md` for the single-pluck
+("which string?") engine behind the picking exercises, and `guitar-roadmap.md` for
+the practice model.
 
 ## Verifying changes
 
@@ -13,6 +15,7 @@ npm run build          # tsc -b && vite build
 npm run check:chords   # chord library structure + harmony
 npm run check:chroma   # templates + confusable pairs
 npm run check:profiles # calibration math, signal contract, calibration gate
+npm run check:picks    # single-pluck string ID, octave disambiguation, pick contract
 npm run check:songs    # progression sections, transitions, playability score
 npm run check:roadmap  # per-level hard requirements (owned+calibrated, swap targets, songs)
 npm run check:normalize
@@ -67,6 +70,12 @@ Install via `context.addInitScript` BEFORE the first page load:
 - A synthetic strum must sound **≥3 distinct pitch classes** with a **long decay**
   (sustain ≥ 0.25). Short or thin tones are classified as *knocks* and never emit a
   `StrumEvent`. Several detuned harmonics per note works well.
+- For **single-pluck** work (`/pick-test`), a faithful note also needs a **long,
+  loud sustain** (strings are meant to ring through a whole run) and a brief
+  **broadband attack transient** (the pick hitting the string). A stack of sine
+  harmonics alone has neither, and both change the answer — see the findings in
+  `docs/pick-detection.md`. Treat the bench as proof of WIRING; tuning needs the
+  real guitar and the Pick Lab's Capture JSON.
 - Space strums ≥ ~600 ms apart (`STRUM_DEBOUNCE_MS`), and wait out
   `QUIZ_ARM_DELAY_MS` (1200 ms) after a quiz question appears.
 - Launch with `args: ['--autoplay-policy=no-user-gesture-required']` and

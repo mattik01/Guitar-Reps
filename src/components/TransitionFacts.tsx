@@ -28,13 +28,12 @@ export function TransitionFacts({ a, b }: { a: string; b: string }) {
           <strong style={{ color: 'var(--ink)' }}>#{freq.rank}</strong> of {TRANSITION_COUNT} · {compact(freq.occurrences)} changes
         </span>
       )}
+      {/* Painted in the level's own colour from the roadmap ramp, so a chip
+          reads as "how far along" at a glance and matches the level card. */}
       {levels.map(l => (
         <span key={l.level}
-          title={`Level ${l.level.slice(1)} asks for this change at ${l.target}/min`}
-          style={{
-            padding: '0 5px', borderRadius: 4, whiteSpace: 'nowrap',
-            border: '1px solid var(--line)', fontWeight: 700,
-          }}>
+          className={`level-chip level-${l.level.slice(1)}`}
+          title={`Level ${l.level.slice(1)} asks for this change at ${l.target}/min`}>
           L{l.level.slice(1)} {l.target}
         </span>
       ))}

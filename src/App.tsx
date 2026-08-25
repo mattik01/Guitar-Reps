@@ -14,7 +14,9 @@ import NewChordRoutine from './routines/NewChordRoutine';
 import SwapRoutine from './routines/SwapRoutine';
 import StrumRoutine from './routines/StrumRoutine';
 import PickRoutine from './routines/PickRoutine';
+import PickIndex from './routes/PickIndex';
 import MicTest from './routes/MicTest';
+import PickLab from './routes/PickLab';
 import CalibrationStudio from './routes/CalibrationStudio';
 
 export default function App() {
@@ -44,8 +46,11 @@ export default function App() {
           <Route path="/routine/new" element={<NewChordRoutine />} />
           <Route path="/routine/swap" element={<SwapRoutine />} />
           <Route path="/routine/strum" element={<StrumRoutine />} />
-          <Route path="/routine/pick" element={<PickRoutine />} />
+          {/* The picking ladder is a catalog; each exercise gets its own screen. */}
+          <Route path="/routine/pick" element={<PickIndex />} />
+          <Route path="/routine/pick/:exerciseId" element={<PickRoutine />} />
           <Route path="/mic-test" element={<MicTest />} />{/* debug/calibration, URL-only */}
+          <Route path="/pick-test" element={<PickLab />} />{/* single-pluck bench, URL-only */}
 
           {/* Pre-restructure URLs — keep old bookmarks landing on the right sub-tab. */}
           <Route path="/repertoire" element={<Navigate to="/chords" replace />} />

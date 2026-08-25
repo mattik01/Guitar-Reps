@@ -25,6 +25,7 @@ import { centeredCosineSim, chordTemplate, cosineSim, verdictForSimilarity, type
 import { soundingPitchClasses } from '../data/validateChords';
 import type { ChordShape } from '../state/store';
 import type { StrumEvent } from './chordListener';
+import type { PluckEvent } from './pluckListener';
 
 // --- data that crosses the boundary ---------------------------------------
 
@@ -204,4 +205,77 @@ export function bestOfSignal(
   const margin = ranked.length >= 2 ? ranked[0].score - ranked[1].score : 0;
   const ambiguous = ranked.length >= 2 && !(margin > minMargin);
   return { ranked, best: ambiguous ? null : ranked[0].id, ambiguous, margin };
+}
+
+// ============================================================================
+// The picking half of the contract:  PluckEvent → PickSignal → checkPick
+// ============================================================================
+// Same rule as above, one engine down: the picking routines must not read
+// PluckEvent (or PluckListener) internals. `pickSignalFromPluck` is the ONE
+// adapter that knows the engine's shape.
+//
+// The deliberate difference from checkSignal: 'unsure' is a real answer, not a
+// weak 'wrong'. Detection cannot separate the octave duplicates of a G shape
+// every time, and being told you picked the wrong string when you did not is
+// useless and demoralising (the same recall-over-precision call the chord
+// thresholds were retuned for). Callers still COUNT an unsure pick for timing;
+// only the accuracy tally treats it separately.
+
+export type PickSignal = {
+  at: number;                 // performance.now() of the attack
+  stringIndex: number | null; // null = the engine would not name one
+  midi: number | null;
+  // `comb`/`sub` are diagnostics — what the harmonic comb scored and how much
+  // sub-octave evidence was subtracted. The Pick Lab reads them to tune; the
+  // routines must not make decisions on them.
+  ranked: { stringIndex: number; midi: number; score: number; comb: number; sub: number }[];
+  margin: number;             // top-two gap, 0..1
+  strength: number;           // how much of the new energy sat on a chord tone
+  newness: number;            // the named string's gain over its own prior level
+  attackRatio: number;        // pick-transient strength — diagnostics/tuning
+  // THE rule for counting: false means the onset added no new energy, i.e. a
+  // re-trigger on a still-ringing note. Not a pick — counting it would inflate
+  // the tally and poison the timing gaps. Distinct from `ambiguous`, which is a
+  // real pick we could not name and which DOES count (shown as unverified).
+  isPick: boolean;
+  ambiguous: boolean;
+  level: number;
+};
+
+export type PickVerdict = 'correct' | 'wrong' | 'unsure';
+export type PickCheck = {
+  stringIndex: number | null;
+  verdict: PickVerdict;
+  margin: number;
+};
+
+/** The one place that knows PluckEvent. Swap engines here. */
+export function pickSignalFromPluck(e: PluckEvent): PickSignal {
+  return {
+    at: e.at,
+    stringIndex: e.stringIndex,
+    midi: e.midi,
+    ranked: e.ranked.map(r => ({
+      stringIndex: r.stringIndex, midi: r.midi, score: r.score, comb: r.comb, sub: r.sub,
+    })),
+    margin: e.margin,
+    strength: e.strength,
+    newness: e.newness,
+    attackRatio: e.attackRatio,
+    isPick: e.isNew,
+    ambiguous: e.ambiguous,
+    level: e.level,
+  };
+}
+
+/** Was this pick the string the exercise asked for? Pure. */
+export function checkPick(signal: PickSignal, expectedStringIndex: number): PickCheck {
+  if (signal.stringIndex == null) {
+    return { stringIndex: null, verdict: 'unsure', margin: signal.margin };
+  }
+  return {
+    stringIndex: signal.stringIndex,
+    verdict: signal.stringIndex === expectedStringIndex ? 'correct' : 'wrong',
+    margin: signal.margin,
+  };
 }

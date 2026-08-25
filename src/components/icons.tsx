@@ -9,8 +9,8 @@ import {
   AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, Dices, Drum,
   ExternalLink, FileText, Guitar, HelpCircle, Download, ListMusic, ListPlus, Pointer,
   ScanSearch,
-  Funnel, Mic, Microscope, MessageSquarePlus, Pencil, Music, MoveVertical, PartyPopper, Play, Plus, Repeat, RotateCcw,
-  SlidersHorizontal, Sparkles, Square, Target, X,
+  Funnel, Metronome, Mic, Microscope, MessageSquarePlus, Pencil, Music, MoveVertical, PartyPopper, Play, Plus, Repeat, RotateCcw,
+  SlidersHorizontal, Sparkles, Square, Target, Trash2, X,
   type LucideProps,
 } from 'lucide-react';
 
@@ -30,8 +30,10 @@ export const IconStop = icon(Square);
 export const IconAdd = icon(Plus);
 export const IconImport = icon(Download);
 export const IconRandom = icon(Dices);         // "give me a random chord / pair"
+export const IconMetronome = icon(Metronome);  // tempo, wherever a tempo is set
 export const IconRestore = icon(RotateCcw);    // undo back to the catalog original
 export const IconRemove = icon(X);             // clear a field, dismiss a chip
+export const IconDelete = icon(Trash2);        // destroy a saved thing, for good
 export const IconExternal = icon(ExternalLink);
 export const IconSheet = icon(FileText);
 export const IconPlaylists = icon(ListMusic);  // membership count

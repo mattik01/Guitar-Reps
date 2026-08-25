@@ -16,6 +16,7 @@ import {
   ALL_ROADMAP_ITEM_IDS,
   type RoadmapLevel,
 } from '../data/roadmap';
+import { levelPaintClass } from '../data/roadmapPaint';
 import { ROADMAP_VIDEOS, youtubeUrl } from '../data/roadmapVideos';
 import { EXTRA_VIDEOS } from '../data/roadmapExtraVideos';
 import {
@@ -248,7 +249,7 @@ function LevelCard({
   }
 
   return (
-    <div className="card" style={{ marginTop: 12 }}>
+    <div className={`card ${levelPaintClass(level.id)}`} style={{ marginTop: 12 }}>
       <div className="row">
         <h3 style={{ margin: 0 }}>{level.name}</h3>
       </div>

@@ -8,15 +8,17 @@ export const KIND_COLOR: Record<RoutineKind, string> = {
   chord: 'var(--paint-terracotta)',
   swap: 'var(--paint-teal)',
   strum: 'var(--paint-ochre)',
+  pick: 'var(--paint-sage)',
 };
 
 export const KIND_LABEL: Record<RoutineKind, string> = {
   chord: 'Chord',
   swap: 'Swap',
   strum: 'Strum',
+  pick: 'Pick',
 };
 
-export const ROUTINE_KINDS: RoutineKind[] = ['chord', 'swap', 'strum'];
+export const ROUTINE_KINDS: RoutineKind[] = ['chord', 'swap', 'strum', 'pick'];
 
 export type DayCell = { key: string; date: Date; entries: RoutineLog[] };
 
@@ -47,7 +49,7 @@ export function DayActivityGrid({ days, compact = false }: { days: DayCell[]; co
   return (
     <div style={{ display: 'grid', gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))`, gap: s.gap }}>
       {days.map(d => {
-        const byKind: Record<RoutineKind, number> = { chord: 0, swap: 0, strum: 0 };
+        const byKind: Record<RoutineKind, number> = { chord: 0, swap: 0, strum: 0, pick: 0 };
         for (const e of d.entries) byKind[e.kind]++;
         const isToday = d.key === todayKey;
         const weekday = d.date.toLocaleDateString(undefined, { weekday: 'short' });

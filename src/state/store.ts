@@ -58,7 +58,7 @@ export type SwapRecord = {
   history: SwapAttempt[];
 };
 
-export type RoutineKind = 'chord' | 'swap' | 'strum';
+export type RoutineKind = 'chord' | 'swap' | 'strum' | 'pick';
 
 export type RoutineLog = {
   at: number;
@@ -68,8 +68,128 @@ export type RoutineLog = {
   swapCount?: number;
   perfectReps?: number;
   progressionId?: string;
+  exerciseId?: string;
+  bpm?: number;
+  clean?: boolean;
   durationMs?: number;
 };
+
+// Picking practice. The truth is SELF-REPORTED ("clean at this tempo?"), the way
+// the quiz's "got it" is — the mic cannot yet verify individual picks well enough
+// to be believed (docs/pick-detection.md), and a wrong automatic verdict is worse
+// than no verdict. The number that means something is therefore the fastest tempo
+// you have played a pattern cleanly, which is exactly what improves with reps.
+export type PickAttempt = {
+  at: number;
+  bpm: number;
+  clean: boolean;
+  chordIds: string[];
+  passes: number;        // completed passes of the pattern
+};
+
+export type PickRecord = {
+  patternId: string;
+  bestCleanBpm: number;  // 0 until the first clean run
+  lastBpm: number;
+  attempts: number;
+  lastAt: number;
+  history: PickAttempt[];
+};
+
+// A progression the user built by hand and kept. Named from its own chords, so
+// saving takes one click and never opens a naming dialog.
+export type SavedProgression = {
+  id: string;
+  name: string;
+  chordIds: string[];
+  at: number;
+};
+
+export function savePickProgression(chordIds: string[]): void {
+  if (chordIds.length < 2) return;
+  const all = read<SavedProgression[]>('reps.pickProgressions', []);
+  const key = chordIds.join(',');
+  if (all.some(p => p.chordIds.join(',') === key)) return;   // already kept
+  const at = Date.now();
+  all.push({ id: `saved-${at}`, name: progressionName(chordIds), chordIds, at });
+  writeStorage('reps.pickProgressions', all);
+}
+
+export function deletePickProgression(id: string): void {
+  const all = read<SavedProgression[]>('reps.pickProgressions', []);
+  writeStorage('reps.pickProgressions', all.filter(p => p.id !== id));
+}
+
+/** Chords are the name — six of them, then an ellipsis. */
+export function progressionName(chordIds: string[]): string {
+  const head = chordIds.slice(0, 6).join(' → ');
+  return chordIds.length > 6 ? `${head} …` : head;
+}
+
+export const PICK_HISTORY_MAX = 20;
+
+/**
+ * Record one picking attempt. A plain function, not a hook setter: like the
+ * other mutators here it may be called from a screen that unmounts immediately
+ * after (see the writeStorage deferral note below).
+ */
+export function recordPickAttempt(
+  patternId: string,
+  attempt: PickAttempt,
+): void {
+  const all = read<Record<string, PickRecord>>('reps.pickRecords', {});
+  const prev = all[patternId];
+  const history = [...(prev?.history ?? []), attempt].slice(-PICK_HISTORY_MAX);
+  all[patternId] = {
+    patternId,
+    bestCleanBpm: attempt.clean
+      ? Math.max(prev?.bestCleanBpm ?? 0, attempt.bpm)
+      : prev?.bestCleanBpm ?? 0,
+    lastBpm: attempt.bpm,
+    attempts: (prev?.attempts ?? 0) + 1,
+    lastAt: attempt.at,
+    history,
+  };
+  writeStorage('reps.pickRecords', all);
+}
+
+/**
+ * Drop one attempt from an exercise's ledger — the escape hatch for a run the
+ * detector mis-scored, which is data you can't practise your way out of.
+ *
+ * The derived numbers are recomputed rather than blindly decremented, with one
+ * subtlety: `history` is capped at PICK_HISTORY_MAX, so the best clean run may
+ * no longer be IN it. The best is therefore only recomputed when the deleted
+ * attempt is the one that could have set it; otherwise the stored best stands.
+ * Deleting the last attempt drops the record entirely, so the exercise reads
+ * "Not played yet" again rather than keeping an empty ledger.
+ */
+export function deletePickAttempt(patternId: string, at: number): void {
+  const all = read<Record<string, PickRecord>>('reps.pickRecords', {});
+  const prev = all[patternId];
+  if (!prev) return;
+  const gone = prev.history.find(h => h.at === at);
+  if (!gone) return;
+  const history = prev.history.filter(h => h.at !== at);
+  if (history.length === 0) {
+    delete all[patternId];
+    writeStorage('reps.pickRecords', all);
+    return;
+  }
+  const heldTheBest = gone.clean && gone.bpm >= prev.bestCleanBpm;
+  const last = history[history.length - 1];
+  all[patternId] = {
+    ...prev,
+    bestCleanBpm: heldTheBest
+      ? Math.max(0, ...history.filter(h => h.clean).map(h => h.bpm))
+      : prev.bestCleanBpm,
+    lastBpm: last.bpm,
+    lastAt: last.at,
+    attempts: Math.max(history.length, prev.attempts - 1),
+    history,
+  };
+  writeStorage('reps.pickRecords', all);
+}
 
 export function pairKey(a: string, b: string): string {
   return [a, b].sort().join('|');
@@ -83,7 +203,7 @@ export function dayKey(ts: number): string {
 type Listener = () => void;
 const listeners = new Map<string, Set<Listener>>();
 
-function read<T>(key: string, initial: T): T {
+export function read<T>(key: string, initial: T): T {
   try {
     const raw = localStorage.getItem(key);
     if (raw === null) return initial;
@@ -225,6 +345,8 @@ export function useSetChordShape(): (id: string, shape: ChordShape) => void {
 }
 export const useSwapRecords = () => useLocalStore<Record<string, SwapRecord>>('reps.swaps', {});
 export const useRoutineLog = () => useLocalStore<RoutineLog[]>('reps.routineLog', []);
+export const usePickRecords = () => useLocalStore<Record<string, PickRecord>>('reps.pickRecords', {});
+export const usePickProgressions = () => useLocalStore<SavedProgression[]>('reps.pickProgressions', []);
 export const useSongs = () => useLocalStore<Song[]>('reps.songs', []);
 export const usePlaylists = () => useLocalStore<Playlist[]>('reps.playlists', []);
 // Per-song user edits, keyed by the song's stable `ref` (songRefOf). Never touches the seed DB.

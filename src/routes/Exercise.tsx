@@ -17,6 +17,16 @@ export default function Exercise() {
     <div>
       <PageHeader title="Exercise" />
 
+      <div className="card" style={{ marginBottom: 'var(--s4)' }}>
+        <div className="row">
+          <h3>This week</h3>
+          <div className="spacer" />
+          <Link to="/" className="button">Full activity</Link>
+        </div>
+        <div style={{ marginTop: 'var(--s3)' }}>
+          <DayActivityGrid days={days} compact />
+        </div>
+      </div>
       <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
         <Link to="/routine/quiz" className={`card routine-card${repertoire.length === 0 ? ' unavailable' : ''}`}>
           <div className="routine-icon"><IconQuiz size={40} /></div>
@@ -40,21 +50,11 @@ export default function Exercise() {
         </Link>
         <Link to="/routine/pick" className="card routine-card">
           <div className="routine-icon"><IconPicking size={40} /></div>
-          <h2>Fingerpicking</h2>
-          <div className="muted">Coming soon</div>
+          <h2>Picking</h2>
+          <div className="muted">Metronome + string-crossing drills</div>
         </Link>
       </div>
 
-      <div className="card" style={{ marginTop: 'var(--s4)' }}>
-        <div className="row">
-          <h3>This week</h3>
-          <div className="spacer" />
-          <Link to="/" className="button">Full activity</Link>
-        </div>
-        <div style={{ marginTop: 'var(--s3)' }}>
-          <DayActivityGrid days={days} compact />
-        </div>
-      </div>
     </div>
   );
 }

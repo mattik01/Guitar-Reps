@@ -33,8 +33,20 @@ export type ChordCardProps = {
   // else a plain diagram. 'none' is REQUIRED where a diagram would be wrong.
   diagram?: 'auto' | 'shape' | 'fingerings' | 'none';
   diagramFallback?: ReactNode;   // shown when there is no shape to draw
+  // Light up one string (0 = low E … 5 = high e) in the diagram — the picking
+  // exercises' "pick THIS string now". Ignored by the fingering swiper.
+  highlightString?: number | null;
 
   showName?: boolean;
+  // Sits inline after the chord's name — for a number that belongs TO this
+  // chord right now (picks left before it changes), which reads as part of the
+  // heading rather than as another thing floating on the card.
+  nameAside?: ReactNode;
+  // A short label that sits ON the card's top outline, fieldset-legend style —
+  // the border visibly breaks to make room for it. For marks that belong to the
+  // card as a whole rather than to its contents (a chord's positions in a
+  // progression), so adding one never changes the card's height.
+  legend?: ReactNode;
   meta?: ReactNode;              // muted line(s) under the diagram
   footer?: ReactNode;            // full-width block under meta
   actions?: ReactNode;           // overlaid top-right of the diagram
@@ -53,8 +65,12 @@ export type ChordCardProps = {
   // Greyed-back but still fully interactive — the Chords grid's "not in your
   // repertoire yet" state. NOT `disabled`, which also kills pointer events.
   dim?: boolean;
+  // Draw the eye to this card — it grows and pulses in its own paint. For the
+  // one card a screen wants you to click when nothing has been chosen yet.
+  hint?: boolean;
   disabled?: boolean;
   className?: string;
+  title?: string;                // tooltip — where a "why can't I?" hint belongs
 };
 
 export function ChordCard({
@@ -63,7 +79,10 @@ export function ChordCard({
   size,
   diagram = 'auto',
   diagramFallback,
+  highlightString = null,
   showName = true,
+  nameAside,
+  legend,
   meta,
   footer,
   actions,
@@ -76,8 +95,10 @@ export function ChordCard({
   to,
   selected = false,
   dim = false,
+  hint = false,
   disabled = false,
   className,
+  title,
 }: ChordCardProps) {
   const scale: ChordCardSize = size ?? (variant === 'tile' ? 'sm' : 'md');
   const px = DIAGRAM_PX[scale];
@@ -113,6 +134,7 @@ export function ChordCard({
     paintClass(chord.id),
     clickable ? 'clickable' : 'static',
     selected ? 'selected' : '',
+    hint ? 'hint' : '',
     dim ? 'dim' : '',
     disabled ? 'disabled' : '',
     className ?? '',
@@ -120,7 +142,13 @@ export function ChordCard({
 
   const body = (
     <>
-      {showName && <div className="name">{chord.name}</div>}
+      {legend != null && <span className="chord-card-legend">{legend}</span>}
+      {showName && (
+        <div className="name">
+          {chord.name}
+          {nameAside != null && <span className="name-aside">{nameAside}</span>}
+        </div>
+      )}
       {status && <div className="chord-card-status">{status}</div>}
       {diagram !== 'none' && (
         <div className="chord-card-body">
@@ -128,7 +156,9 @@ export function ChordCard({
             useViewer && chord.fingerings
               ? <FingeringViewer chordId={chord.id} fingerings={chord.fingerings} size={px}
                   onSelect={onFingeringSelect} />
-              : chord.shape && <ChordDiagram shape={chord.shape} size={px} />
+              : chord.shape && (
+                <ChordDiagram shape={chord.shape} size={px} highlightString={highlightString} />
+              )
           ) : diagramFallback}
           {actions && <div className="chord-card-actions">{actions}</div>}
         </div>
@@ -140,7 +170,7 @@ export function ChordCard({
   );
 
   if (to && !disabled) {
-    return <Link to={to} className={cls} aria-label={chord.name}>{body}</Link>;
+    return <Link to={to} className={cls} aria-label={chord.name} title={title}>{body}</Link>;
   }
 
   if (onClick && !disabled) {
@@ -148,14 +178,14 @@ export function ChordCard({
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); }
     };
     return (
-      <div className={cls} role="button" tabIndex={0} aria-label={chord.name}
+      <div className={cls} role="button" tabIndex={0} aria-label={chord.name} title={title}
         onClick={onClick} onKeyDown={activate}>
         {body}
       </div>
     );
   }
 
-  return <div className={cls}>{body}</div>;
+  return <div className={cls} title={title}>{body}</div>;
 }
 
 // The per-chord calibration state, linking into the Calibration Studio. Rendered

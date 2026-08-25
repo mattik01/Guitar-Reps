@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "check:chords": "esbuild scripts/checkChords.ts --bundle --platform=node --format=esm | node --input-type=module",
     "check:chroma": "esbuild scripts/checkChroma.ts --bundle --platform=node --format=esm | node --input-type=module",
+    "check:picks": "esbuild scripts/checkPicks.ts --bundle --platform=node --format=esm | node --input-type=module",
     "check:profiles": "esbuild scripts/checkProfiles.ts --bundle --platform=node --format=esm | node --input-type=module",
     "check:roadmap": "esbuild scripts/checkRoadmap.ts --bundle --platform=node --format=esm | node --input-type=module",
     "check:songs": "esbuild scripts/checkSongs.ts --bundle --platform=node --format=esm | node --input-type=module",

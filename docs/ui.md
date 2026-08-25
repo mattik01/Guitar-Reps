@@ -76,14 +76,24 @@ The look is a balfolk flyer: linen paper, six muted-saturated **paints**, drawn
 | **Interactive** | `--accent` (terracotta) | The ONLY colour that means "you can press this" |
 | Display type | `--accent-2` (teal) | Headings' big siblings: `.display`, `.timer`, `.stage-display` |
 | Semantic | `--good` `--warn` `--bad` | |
-| **Identity** | `--paint-*` × 6 | Chord family, routine kind, chart series. NEVER a control |
+| **Identity** | `--paint-*` × 6 | Routine kind, chart series. NEVER a control |
+| **Difficulty** | `--level-1` … `--level-8` | The roadmap ramp: chord cards, level cards, level chips |
 
 The `--paint-*` split is the load-bearing rule: **hue means "what kind of thing
-is this", never "what state is it in" and never "this is clickable".** A chord's
-paint comes from its category via `src/data/chordPaint.ts`; `ChordCard` applies
-the `paint-*` class itself, so `--paint` is readable by anything inside a card
-(`ChordDiagram` dots and barres already use it). Ownership, selection and
-calibration are carried by border weight, the mic ring and the check — not hue.
+is this" or "how far along is it", never "what state is it in" and never "this
+is clickable".**
+
+`--level-1 … --level-8` are the roadmap's difficulty RAMP — the same gouache
+inks, ordered cool & light → warm → hot → deep → ink, so "harder" reads from
+saturation and darkness rather than from a red/green scale. Anything that
+belongs to a roadmap level wears its colour: the level cards on `/roadmap`
+(`.level-card`, `src/data/roadmapPaint.ts`), the `L3 40` badges in
+`TransitionFacts` (`.level-chip`), and every chord card — a chord takes the
+level of its category (`src/data/chordPaint.ts`), so a barre chord looks harder
+than an open C. `ChordCard` applies the `level-*` class itself, so `--paint` is
+readable by anything inside a card (`ChordDiagram` dots and barres already use
+it). Ownership, selection and calibration are carried by border weight, the mic
+ring and the check — not hue.
 
 Type is split the way the flyers split it: **Fraunces** (`--font-display`, with
 `--display-vf` turning the wonk/soft axes on) for headings, chord names and the
@@ -183,3 +193,38 @@ design pass — not in one sweep, so nothing changes before you've reviewed it.
 | Chords / Songs / Browse | ⬜ | ~70 |
 | Roadmap / Videos | ⬜ | ~70 |
 | Editors (chord, song) | ⬜ | ~47 |
+
+
+## Picking
+
+`PickTab` (`src/components/PickTab.tsx`) is THE way a pick sequence is drawn —
+the setup preview and the live run both render it. Standard tab orientation,
+**high e on top**: that is the one place here where a real-world convention
+outranks internal consistency, and flipping it to match `PickStrip` would make it
+wrong to every guitarist who reads it.
+
+`PickStrip` (`src/components/PickStrip.tsx`) is THE six-string display — a
+vertical slice of "which string right now". It stays in the Pick Lab, where it is
+a ground-truth *input*; the running routine doesn't render it, because the tab's
+current column already says which string is next and two of them is decorative
+repetition (§1 rule 5).
+
+`LevelSections` (`src/components/LevelSections.tsx`) groups anything by roadmap
+level, the sibling of `ChordCategorySections` (which groups chords by *category*,
+the category carrying a display level string). Levels with no items don't render,
+so a ladder that only reaches L1 shows one heading rather than eight.
+
+"This one, now" is **`--accent-2`** wherever it appears — `PickTab`'s current
+column and `ChordDiagram`'s `highlightString` use the same colour on purpose. A
+chord's paint would be wrong there: paint is identity (which chord family), not
+state. `.kind-chip` (the RIFF badge) is the reverse case — that IS identity, so
+it takes a paint.
+Strings read low E → high e, matching a chord diagram; the "string 6 … string 1"
+numbering would run the other way and put the two views in opposite orders on the
+same screen. Per-string highlight inside a diagram is `ChordDiagram`'s
+`highlightString`, threaded through `ChordCard`.
+
+Pick direction (down/up) is shown as an arrow and is **never scored** — it is not
+recoverable from audio (`docs/pick-detection.md`), so the UI must not imply it is
+being checked. That, and every other "why" in this routine, lives in a `title`
+tooltip rather than page prose.

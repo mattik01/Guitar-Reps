@@ -1,53 +1,39 @@
-// Which of the six Gouache Bal paints a chord is drawn in.
+// Which colour a chord is drawn in.
 //
-// Colour here is IDENTITY, not state: it says "this is a barre chord", the way
-// a balfolk flyer gives each band its own ink. It never means "clickable" —
-// that is --accent alone (docs/ui.md §2). Owned / calibrated / selected are all
-// still carried by border weight, the mic ring and the check, not by hue.
+// Colour here is DIFFICULTY, not family: a chord wears the colour of the
+// roadmap level it belongs to, so the same ramp that orders the Roadmap's level
+// cards (cool & light → warm → hot → deep → ink, see roadmapPaint.ts) also runs
+// through every chord grid. A barre chord looks harder than an open C because
+// its ink says L3, not because it is "the barre colour".
 //
-// The mapping is arranged so that CONSECUTIVE categories differ, because the
-// Chords page stacks them as adjacent sections via ChordCategorySections.
+// It never means "clickable" — that is --accent alone (docs/ui.md §2). Owned /
+// calibrated / selected are still carried by border weight, the mic ring and
+// the check, not by hue.
+//
+// The level comes from the chord's category (`ChordCategory.roadmapLevel`, e.g.
+// "L3–6"), read as its LOWEST level — the point at which you would first meet
+// the shape. Values live in styles.css as --level-1 … --level-8.
 
 import { libraryChordById } from './chordLibrary';
-import type { ChordCategoryId } from './chordCategories';
+import { chordCategoryById, type ChordCategoryId } from './chordCategories';
 
-export type PaintName = 'terracotta' | 'ochre' | 'sage' | 'teal' | 'plum' | 'indigo';
-
-export const PAINTS: PaintName[] = ['terracotta', 'ochre', 'sage', 'teal', 'plum', 'indigo'];
-
-const BY_CATEGORY: Record<ChordCategoryId, PaintName> = {
-  'open-basic': 'terracotta',
-  'open-colorful': 'ochre',
-  power: 'sage',
-  barre: 'plum',
-  'sevenths-open': 'teal',
-  'sevenths-movable': 'indigo',
-  extended: 'ochre',
-  'altered-dominant': 'terracotta',
-  'advanced-voicings': 'plum',
-  other: 'sage',
-};
-
-export function paintForCategory(category: ChordCategoryId): PaintName {
-  return BY_CATEGORY[category] ?? 'terracotta';
+/** 1–8, or null for a category with no roadmap level (custom chords). */
+export function levelForCategory(category: ChordCategoryId): number | null {
+  const raw = chordCategoryById(category)?.roadmapLevel;
+  const first = raw?.match(/\d/)?.[0];
+  return first ? Number(first) : null;
 }
 
-// Chords the user registered themselves have no library entry, so they get a
-// stable paint from their id instead of all collapsing into one colour.
-function paintFromId(id: string): PaintName {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return PAINTS[h % PAINTS.length];
-}
-
-export function paintForChord(id: string, category?: ChordCategoryId): PaintName {
-  if (category) return paintForCategory(category);
+export function levelForChord(id: string, category?: ChordCategoryId): number | null {
+  if (category) return levelForCategory(category);
   const lib = libraryChordById(id);
-  if (lib) return paintForCategory(lib.category);
-  return id ? paintFromId(id) : 'terracotta';
+  return lib ? levelForCategory(lib.category) : null;
 }
 
 // The class that sets --paint. Styles live in styles.css next to .chord-card.
+// A chord with no level (one you registered yourself) gets the neutral ink
+// rather than a guessed rung on the ramp.
 export function paintClass(id: string, category?: ChordCategoryId): string {
-  return `paint-${paintForChord(id, category)}`;
+  const level = levelForChord(id, category);
+  return level ? `level-${level}` : 'level-none';
 }
