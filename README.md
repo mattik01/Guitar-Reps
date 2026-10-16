@@ -20,6 +20,17 @@ npm install
 npm run dev
 ```
 
+### Run as a Mac app
+
+```bash
+./scripts/install-mac-app.sh   # creates ~/Applications/Guitar Reps.app (Spotlight/Launchpad/Dock)
+./scripts/start.sh             # or: start the dev server if needed and open the app window
+./scripts/stop.sh              # stop the background dev server
+```
+
+The app starts the dev server on localhost:5173 in the background (log:
+`~/Library/Logs/GuitarReps.log`) and opens it as a Chrome app window.
+
 ## Status
 
 Personal practice tool · work in progress · early days.
